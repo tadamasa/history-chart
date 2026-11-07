@@ -1,0 +1,187 @@
+openapi: 3.1.0
+info:
+  title: 年表ハブ 登録API
+  version: "1.0"
+  description: |
+    「年表」アプリ(https://tadamasa.github.io/history-chart/)に、出来事と因果関係を外部から登録するAPI。
+    実体は利用者のGoogleスプレッドシートに付けたApps Scriptのウェブアプリ(hub/Code.gs)。
+    人とAI向けの説明は docs/API_FOR_AI.md。
+
+    - 応答は常にHTTP 200のJSON。成否は本文の ok で判断する。
+    - Apps Scriptは302でリダイレクトするので、クライアントはリダイレクトに従うこと。
+    - POSTの本文はJSON文字列(Content-Type は application/json でも text/plain でも可)。
+    - 登録はすべて検証してから書く。1件でも誤りがあれば何も書かない。
+servers:
+  - url: https://script.google.com/macros/s/{deploymentId}/exec
+    variables:
+      deploymentId:
+        default: DEPLOYMENT_ID
+        description: 利用者から渡されるウェブアプリのデプロイID
+security:
+  - apiKey: []
+paths:
+  /:
+    get:
+      operationId: listItems
+      summary: カテゴリまたは出来事の一覧
+      parameters:
+        - name: action
+          in: query
+          required: true
+          schema: { type: string, enum: [cats, events] }
+      responses:
+        "200":
+          description: 一覧(ok が false ならエラー)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/CatsResponse"
+                  - $ref: "#/components/schemas/EventsResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: registerItems
+      summary: 出来事と関係を登録する(dryRun=1 なら検証だけ)
+      parameters:
+        - name: dryRun
+          in: query
+          required: false
+          schema: { type: string, enum: ["1"] }
+          description: "1 を付けると検証だけして書かない"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+          text/plain:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "200":
+          description: 結果(ok が false なら何も書かれていない)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/RegisterResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: query
+      name: key
+      description: hc_ で始まるAPIキー(アプリ同期用の合言葉とは別物)
+  schemas:
+    Year:
+      type: integer
+      minimum: -3300
+      description: 紀元前は負の数。0年は存在しない(0はエラー)。上限は今年。
+      not: { const: 0 }
+    Source:
+      oneOf:
+        - type: object
+          required: [title]
+          additionalProperties: false
+          properties:
+            title: { type: string, minLength: 1, maxLength: 300, description: 書名・論文名・ページ名 }
+            url: { type: string, pattern: "^https?://\\S+$", maxLength: 1000 }
+            quote: { type: string, maxLength: 500, description: 根拠となる一文を原文のまま }
+        - type: string
+          description: URLだけ、または題名だけ
+    Provenance:
+      type: object
+      properties:
+        memo: { type: string, maxLength: 2000, description: 備考・根拠 }
+        sources: { type: array, maxItems: 10, items: { $ref: "#/components/schemas/Source" } }
+        by: { type: string, maxLength: 100, description: 登録元(本文の by より優先) }
+    Event:
+      allOf:
+        - $ref: "#/components/schemas/Provenance"
+        - type: object
+          required: [year, cat, title]
+          properties:
+            id: { type: string, pattern: "^[A-Za-z0-9_.:-]{1,64}$", description: 付けると同じidを上書き(冪等)。省くと api-… が振られる }
+            year: { $ref: "#/components/schemas/Year" }
+            month: { type: integer, minimum: 1, maximum: 12 }
+            day: { type: integer, minimum: 1, maximum: 31, description: 入れるなら month も必須 }
+            endYear: { $ref: "#/components/schemas/Year" }
+            endMonth: { type: integer, minimum: 1, maximum: 12 }
+            endDay: { type: integer, minimum: 1, maximum: 31, description: 入れるなら endMonth も必須 }
+            cat: { type: string, description: カテゴリのidか名前(GET action=cats) }
+            title: { type: string, minLength: 1 }
+            detail: { type: string }
+    Link:
+      allOf:
+        - $ref: "#/components/schemas/Provenance"
+        - type: object
+          required: [from, to]
+          properties:
+            from: { type: string, description: 出来事のidか題名(完全一致で1件)。cause なら原因側 }
+            to: { type: string, description: 出来事のidか題名。cause なら結果側 }
+            kind: { type: string, enum: [cause, parallel, 因果, 原因, 並行], default: cause }
+            note: { type: string, maxLength: 500 }
+            confidence: { type: string, enum: [certain, likely, speculative, 確実, 有力, 推測] }
+    RegisterRequest:
+      type: object
+      properties:
+        by: { type: string, maxLength: 100, description: 全件の既定の登録元 }
+        events: { type: array, maxItems: 200, items: { $ref: "#/components/schemas/Event" } }
+        links: { type: array, maxItems: 400, items: { $ref: "#/components/schemas/Link" } }
+      description: events と links の少なくとも一方に1件以上
+    RegisterResponse:
+      type: object
+      required: [ok, dryRun, events, links]
+      properties:
+        ok: { const: true }
+        dryRun: { type: boolean }
+        events:
+          type: array
+          items:
+            type: object
+            properties:
+              index: { type: integer }
+              id: { type: string }
+              title: { type: string }
+              status: { type: string, enum: [added, updated] }
+        links:
+          type: array
+          items:
+            type: object
+            properties:
+              index: { type: integer }
+              id: { type: string, description: "from>to" }
+              status: { type: string, enum: [added, updated, exists] }
+    ErrorResponse:
+      type: object
+      required: [ok, error]
+      properties:
+        ok: { const: false }
+        error: { type: string, description: "unauthorized / bad json / invalid / そのほか日本語の説明" }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              at: { type: string, description: "例 events[1].month, links[0].from" }
+              message: { type: string }
+    CatsResponse:
+      type: object
+      properties:
+        ok: { const: true }
+        cats: { type: array, items: { type: object, properties: { id: { type: string }, name: { type: string } } } }
+    EventsResponse:
+      type: object
+      properties:
+        ok: { const: true }
+        events:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              year: { type: integer }
+              month: { type: [integer, "null"] }
+              day: { type: [integer, "null"] }
+              endYear: { type: [integer, "null"] }
+              cat: { type: string }
+              title: { type: string }

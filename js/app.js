@@ -7,7 +7,7 @@ import { exportData, importData } from './backup.js';
 import { SEED_CATS, SEED_EVENTS, SEED_LINKS } from './seed.js';
 import { TEXT } from './text.js';
 
-const APP_VERSION = 'v2';
+const APP_VERSION = 'v3';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const svgG = (kind, size, r) => `<svg viewBox="0 0 ${size} ${size}" aria-hidden="true"><path d="${core.glyphD(kind, size / 2, size / 2, r)}"/></svg>`;
@@ -84,7 +84,7 @@ function renderTimeline() {
   lead.innerHTML = bars + lds + mks;
   const rels = $('rels');
   rels.setAttribute('width', width); rels.setAttribute('height', L.totalH); rels.setAttribute('viewBox', `0 0 ${width} ${L.totalH}`);
-  rels.innerHTML = L.rels.map(r => `<path class="rel${r.strong ? ' strong' : ''}${r.ai ? ' ai' : ''}" d="${r.d}"/>`).join('') +
+  rels.innerHTML = L.rels.map(r => `<path class="rel${r.strong ? ' strong' : ''}${r.ai ? ' ai' : ''}${r.spec ? ' spec' : ''}" d="${r.d}"/>`).join('') +
     L.rels.map(r => `<circle class="rel-dot${r.strong ? ' strong' : ''}" cx="${r.end[0]}" cy="${r.end[1]}" r="2"/>`).join('');
   void svgAttr;
 
@@ -218,6 +218,7 @@ function detailHTML() {
       <h2 class="d-title">${esc(e.title)}</h2>
     </div>
     <p class="d-detail">${esc(e.detail || TEXT.noDetail)}</p>
+    ${provHTML(e, 'ev-prov')}
     <div class="d-actions">
       <button class="btn btn-primary a1" data-act="analyze" ${S.aiBusy ? 'disabled' : ''}>${ICON.sparkles}${label}</button>
       <button class="btn btn-secondary a2" data-act="pick">${ICON.msgs}${TEXT.compare}</button>
@@ -227,12 +228,29 @@ function detailHTML() {
     ${info?.summary ? `<div class="ai-box"><div class="h">${TEXT.aiSummary}</div><div class="b">${esc(info.summary)}</div></div>` : ''}
     <div>
       <div class="sec-h">${TEXT.relations} <span>${rels.length ? rels.length + '件' : ''}</span></div>
-      ${rels.length ? rels.map(r => `<button class="rel-row" data-act="goto" data-id="${esc(r.id)}"><span class="dir">${r.dir}</span><span class="tt">${esc(r.title)}<span class="dt">${esc(r.date)}</span>${r.src ? `<span class="src">${r.src}</span>` : ''}</span><span class="nt">${esc(r.note)}</span></button>`).join('') : `<p class="empty">${TEXT.noRelations}</p>`}
+      ${rels.length ? rels.map(r => `<div class="rel-item"><button class="rel-row" data-act="goto" data-id="${esc(r.id)}"><span class="dir">${r.dir}</span><span class="tt">${esc(r.title)}<span class="dt">${esc(r.date)}</span>${r.src ? `<span class="src">${r.src}</span>` : ''}${r.conf ? `<span class="conf conf-${esc(r.conf)}">${esc(r.conf)}</span>` : ''}</span><span class="nt">${esc(r.note)}</span></button>${provHTML(r, 'rel-prov')}</div>`).join('') : `<p class="empty">${TEXT.noRelations}</p>`}
     </div>
     ${sugs.length ? `<div>
       <div class="sec-h">${TEXT.suggestions}</div>
       ${sugs.map((s, i) => `<div class="sug"><div class="m"><span class="tt">${esc(s.title)} <span class="dt">${esc(core.fmtYear(s.year))} · ${esc(catById(s.cat)?.name || '')}</span></span><span class="nt">${esc(s.reason)}</span></div><button class="btn btn-secondary" data-act="add-sug" data-i="${i}">追加</button></div>`).join('')}
     </div>` : ''}
+  </div>`;
+}
+
+// 根拠の欄(備考・出典・登録元)。なければ何も出さない
+function provHTML(x, cls) {
+  const src = x.sources || [];
+  if (!x.memo && !src.length && !x.by) return '';
+  const li = src.map(s => {
+    const u = core.safeUrl(s.url);
+    const t = u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a>` : `<span>${esc(s.title)}</span>`;
+    return `<li>${t}${s.quote ? `<q>${esc(s.quote)}</q>` : ''}</li>`;
+  }).join('');
+  return `<div class="prov ${cls}">
+    ${cls === 'ev-prov' ? `<div class="h">${TEXT.provTitle}</div>` : ''}
+    ${x.memo ? `<p class="memo">${esc(x.memo)}</p>` : ''}
+    ${li ? `<ul class="srcs">${li}</ul>` : ''}
+    ${x.by ? `<div class="by">${TEXT.byLabel} ${esc(x.by)}</div>` : ''}
   </div>`;
 }
 
@@ -265,6 +283,7 @@ function formHTML() {
       ${cats().map(c => `<button type="button" class="cat-opt${c.id === f.cat ? ' on' : ''}" data-act="form-cat" data-id="${esc(c.id)}">${svgG(c.glyph, 12, 3.6)}<span>${esc(c.name)}</span></button>`).join('')}
     </div></div>
     <div class="field"><label>詳細</label><textarea class="input" name="detail" placeholder="${TEXT.detailPh}" style="min-height:72px">${esc(f.detail)}</textarea></div>
+    <div class="field"><label>備考・根拠</label><textarea class="input" name="memo" placeholder="${TEXT.memoPh}" style="min-height:56px">${esc(f.memo || '')}</textarea></div>
     <button type="submit" class="btn btn-primary blueprint submit">${ICON.corners}${e ? TEXT.saveEdit : TEXT.submitAdd}</button>
   </form>`;
 }
@@ -276,7 +295,7 @@ function readForm() {
     era: radio('era'), year: v('year'), month: v('month'), day: v('day'),
     hasEnd: fm.querySelector('[data-act="form-end"]').classList.contains('on'),
     eEra: radio('eEra'), eYear: v('eYear'), eMonth: v('eMonth'), eDay: v('eDay'),
-    title: fm.elements.title.value, detail: fm.elements.detail.value,
+    title: fm.elements.title.value, detail: fm.elements.detail.value, memo: fm.elements.memo.value,
     cat: fm.querySelector('.cat-opt.on')?.dataset.id || cats()[0]?.id,
   };
 }
@@ -291,12 +310,15 @@ async function submitForm() {
   if (S.editId) {
     const old = evById(S.editId);
     id = old.id;
-    const next = { id, ...ev };
+    // 出典・登録元など、フォームにない欄は残す。期間を外したときは終了の欄を消す
+    const { ey: _ey, em: _em, ed: _ed, ...keep } = old;
+    const next = { ...keep, id, ...ev, memo: f.memo.trim() };
+    if (!next.memo) delete next.memo;
     S.events = S.events.map(x => (x.id === id ? next : x));
     await db.put('events', next);
   } else {
     id = db.uid();
-    const next = { id, ...ev };
+    const next = { id, ...ev, ...(f.memo.trim() ? { memo: f.memo.trim() } : {}) };
     S.events = [...S.events, next];
     await db.put('events', next);
   }

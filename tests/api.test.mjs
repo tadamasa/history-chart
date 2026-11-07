@@ -113,3 +113,59 @@ test('ハブの入力検証はアプリと同じ規則・同じ文言', () => {
   }
   assert.equal(n, 1680);
 });
+
+test('根拠の欄: 備考・出典・確からしさ・登録元を受け取り、表にも読める形で残す', () => {
+  const hub = syncedHub();
+  const before = Number(hub.props.REV);
+  const r = hub.api({ key: key(hub) }, {
+    by: 'claude-agent',
+    events: [{ id: 'moore', year: 1965, cat: 'info', title: 'ムーアの法則', memo: '論文の図から', sources: ['https://example.org/moore1965.pdf', { title: 'Electronics誌 1965年4月号', quote: 'The complexity for minimum component costs has increased…' }] }],
+    links: [{ from: 'e26', to: 'moore', confidence: '有力', memo: '直接の言及はない', sources: [{ title: 'Moore 1965', url: 'https://example.org/moore1965.pdf' }], by: 'gpt-x' }],
+  });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const s = hub.post({ token: hub.token, since: before });
+  const ev = s.events[0].data, ln = s.links[0].data;
+  assert.equal(ev.memo, '論文の図から');
+  assert.deepEqual(ev.sources[0], { title: 'https://example.org/moore1965.pdf', url: 'https://example.org/moore1965.pdf' });
+  assert.equal(ev.sources[1].quote.startsWith('The complexity'), true);
+  assert.equal(ev.by, 'claude-agent');           // 本文の by が既定
+  assert.deepEqual([ln.confidence, ln.by], ['likely', 'gpt-x']); // 関係ごとの by が優先
+  const head = hub.sheets.get('links').rows[0];
+  const row = hub.sheets.get('links').rows.find(x => x[0] === 'e26>moore');
+  assert.equal(row[head.indexOf('confidence')], '有力');
+  assert.equal(row[head.indexOf('sources')], 'Moore 1965 <https://example.org/moore1965.pdf>');
+  assert.equal(head[head.length - 1], 'json');
+});
+
+test('根拠の欄の誤りは書かずに返す', () => {
+  const hub = syncedHub();
+  const r = hub.api({ key: key(hub) }, {
+    events: [{ year: 1900, cat: 'phys', title: 'x', sources: [{ url: 'https://a' }] }, { year: 1900, cat: 'phys', title: 'y', memo: 'm'.repeat(2001) }],
+    links: [{ from: 'e1', to: 'e2', confidence: 'たぶん' }, { from: 'e1', to: 'e3', sources: [{ title: 't', url: 'javascript:alert(1)' }] }],
+  });
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.errors.map(e => e.at), ['events[0].sources[0]', 'events[1].memo', 'links[0].confidence', 'links[1].sources[0].url']);
+});
+
+test('既にある関係に根拠だけ足せる(向きと説明は変えない)', () => {
+  const hub = syncedHub();
+  const r = hub.api({ key: key(hub) }, { links: [{ from: 'e31', to: 'e26', confidence: 'certain', sources: [{ title: 'Intel 4004 資料' }] }] });
+  assert.equal(r.links[0].status, 'updated');
+  assert.equal(r.links[0].id, 'e26>e31');
+  const l = hub.post({ token: hub.token, since: 0 }).links.find(x => x.id === 'e26>e31').data;
+  assert.deepEqual([l.from, l.to, l.src, l.confidence], ['e26', 'e31', 'seed', 'certain']);
+  assert.equal(l.note, 'トランジスタの集積がマイクロプロセッサに到達した。');
+  // 根拠のない再送は今まで通り exists
+  assert.equal(hub.api({ key: key(hub) }, { links: [{ from: 'e26', to: 'e31' }] }).links[0].status, 'exists');
+});
+
+test('古い列の並びのシートは、見出しの名前で新しい並びに移す', () => {
+  const hub = loadHub();
+  const sh = hub.sheets.get('links');
+  const oldCols = ['id', 'rev', 'mtime', 'deleted', 'from', 'to', 'kind', 'note', 'src', 'json'];
+  sh.rows = [oldCols, ['a>b', '1', '5', 'false', 'a', 'b', '因果', 'n', 'seed', JSON.stringify({ id: 'a>b', from: 'a', to: 'b', note: 'n', src: 'seed' })]];
+  const r = hub.post({ token: hub.token, since: 0 });
+  assert.equal(r.links[0].data.from, 'a');
+  assert.equal(sh.rows[0][sh.rows[0].length - 1], 'json');
+  assert.equal(sh.rows[0].length, 14);
+});

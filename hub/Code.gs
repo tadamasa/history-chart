@@ -20,8 +20,8 @@
 const KINDS = ['cats', 'events', 'links', 'ai'];
 const COLS = {
   cats: ['id', 'rev', 'mtime', 'deleted', 'name', 'glyph', 'order', 'json'],
-  events: ['id', 'rev', 'mtime', 'deleted', 'year', 'month', 'day', 'endYear', 'endMonth', 'endDay', 'cat', 'title', 'detail', 'json'],
-  links: ['id', 'rev', 'mtime', 'deleted', 'from', 'to', 'kind', 'note', 'src', 'json'],
+  events: ['id', 'rev', 'mtime', 'deleted', 'year', 'month', 'day', 'endYear', 'endMonth', 'endDay', 'cat', 'title', 'detail', 'memo', 'sources', 'by', 'json'],
+  links: ['id', 'rev', 'mtime', 'deleted', 'from', 'to', 'kind', 'note', 'src', 'confidence', 'memo', 'sources', 'by', 'json'],
   ai: ['id', 'rev', 'mtime', 'deleted', 'summary', 'suggestions', 'json'],
 };
 const PAGE = 400; // 1回の応答で返す最大件数
@@ -109,8 +109,8 @@ function row_(name, item, rev) {
   const head = [item.id, String(rev), String(Number(item.mtime || 0)), String(!!item.deleted)];
   const tail = item.deleted ? '' : cell_(d);
   if (name === 'cats') return head.concat([d.name || '', d.glyph || '', d.order ?? '', tail]);
-  if (name === 'events') return head.concat([d.y ?? '', d.m || '', d.d || '', d.ey || '', d.em || '', d.ed || '', d.cat || '', d.title || '', d.detail || '', tail]);
-  if (name === 'links') return head.concat([d.from || '', d.to || '', d.para ? '並行' : (d.from ? '因果' : ''), d.note || '', d.src || '', tail]);
+  if (name === 'events') return head.concat([d.y ?? '', d.m || '', d.d || '', d.ey || '', d.em || '', d.ed || '', d.cat || '', d.title || '', d.detail || '', d.memo || '', srcText_(d.sources), d.by || '', tail]);
+  if (name === 'links') return head.concat([d.from || '', d.to || '', d.para ? '並行' : (d.from ? '因果' : ''), d.note || '', d.src || '', CONF_LABEL[d.confidence] || '', d.memo || '', srcText_(d.sources), d.by || '', tail]);
   return head.concat([d.summary || '', d.suggestions ? d.suggestions.map(s => s.title).join(' / ') : '', tail]);
 }
 
@@ -119,6 +119,10 @@ function cell_(obj) {
   const s = JSON.stringify(obj);
   return s.length < 49000 ? s : JSON.stringify(Object.assign({}, obj, { detail: String(obj.detail || '').slice(0, 20000) }));
 }
+
+const CONF_LABEL = { certain: '確実', likely: '有力', speculative: '推測' };
+// 出典を表で読める1行に: 題名 <URL> / …
+function srcText_(list) { return (list || []).map(x => x.title + (x.url ? ' <' + x.url + '>' : '')).join(' / '); }
 
 function sheet_(name) {
   const cols = COLS[name];
@@ -130,8 +134,25 @@ function sheet_(name) {
     sh.getRange(1, 1, sh.getMaxRows(), cols.length).setNumberFormat('@');
     sh.getRange(1, 1, 1, cols.length).setValues([cols]).setFontWeight('bold');
     sh.setFrozenRows(1);
+    return sh;
   }
+  migrate_(sh, cols);
   return sh;
+}
+
+// 版が上がって列が増えたシートを、見出しの名前で新しい並びに移す(json が最後の列であり続けるように)
+function migrate_(sh, cols) {
+  const width = Math.max(sh.getLastColumn ? sh.getLastColumn() : cols.length, 1);
+  const head = sh.getRange(1, 1, 1, width).getValues()[0].map(String);
+  if (head.slice(0, cols.length).join('\t') === cols.join('\t')) return;
+  const rows = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, width).getValues() : [];
+  const at = {};
+  head.forEach((h, i) => { at[h] = i; });
+  const moved = rows.map(r => cols.map(c => (at[c] === undefined ? '' : r[at[c]])));
+  sh.getRange(1, 1, sh.getMaxRows(), Math.max(width, cols.length)).setNumberFormat('@');
+  sh.getRange(1, 1, 1, cols.length).setValues([cols]).setFontWeight('bold');
+  if (moved.length) sh.getRange(2, 1, moved.length, cols.length).setValues(moved);
+  if (width > cols.length) sh.getRange(1, cols.length + 1, rows.length + 1, width - cols.length).setValues(Array.from({ length: rows.length + 1 }, () => Array(width - cols.length).fill('')));
 }
 
 function parse_(s) { try { return JSON.parse(s); } catch (e) { return null; } }
@@ -215,10 +236,52 @@ function apiToForm_(x) {
   };
 }
 
+const CONF_WORDS = { certain: 'certain', '確実': 'certain', likely: 'likely', '有力': 'likely', speculative: 'speculative', '推測': 'speculative' };
+
+// 根拠の欄(出来事・関係で共通): memo(備考), sources(出典), by(登録元)。関係だけ confidence(確からしさ)。
+// 誤りは errors に積み、正しければアプリに入れる形を返す。
+function provenance_(x, at, errors, defaultBy, isLink) {
+  const out = {};
+  if (x.memo !== undefined && x.memo !== null && x.memo !== '') {
+    if (typeof x.memo !== 'string' || x.memo.length > 2000) errors.push({ at: at + '.memo', message: 'memo(備考)は2000字以内の文字列です' });
+    else out.memo = x.memo.trim();
+  }
+  if (x.sources !== undefined && x.sources !== null) {
+    const list = Array.isArray(x.sources) ? x.sources : [x.sources];
+    if (list.length > 10) errors.push({ at: at + '.sources', message: 'sources(出典)は10件までです' });
+    const clean = [];
+    list.slice(0, 10).forEach((src, k) => {
+      const one = typeof src === 'string' ? (/^https?:\/\//.test(src) ? { title: src, url: src } : { title: src }) : src;
+      const a = at + '.sources[' + k + ']';
+      if (!one || typeof one !== 'object' || typeof one.title !== 'string' || !one.title.trim() || one.title.length > 300) { errors.push({ at: a, message: '出典には title(300字以内)が要ります' }); return; }
+      if (one.url !== undefined && one.url !== '' && !(typeof one.url === 'string' && /^https?:\/\/\S+$/.test(one.url) && one.url.length <= 1000)) { errors.push({ at: a + '.url', message: 'url は http(s):// で始まるURLです' }); return; }
+      if (one.quote !== undefined && one.quote !== '' && !(typeof one.quote === 'string' && one.quote.length <= 500)) { errors.push({ at: a + '.quote', message: 'quote(引用)は500字以内です' }); return; }
+      const c = { title: one.title.trim() };
+      if (one.url) c.url = one.url;
+      if (one.quote) c.quote = one.quote.trim();
+      clean.push(c);
+    });
+    if (clean.length) out.sources = clean;
+  }
+  if (isLink && x.confidence !== undefined && x.confidence !== null && x.confidence !== '') {
+    const c = CONF_WORDS[String(x.confidence).toLowerCase()] || CONF_WORDS[x.confidence];
+    if (!c) errors.push({ at: at + '.confidence', message: 'confidence は certain(確実)・likely(有力)・speculative(推測)のどれかです' });
+    else out.confidence = c;
+  }
+  const by = x.by !== undefined ? x.by : defaultBy;
+  if (by !== undefined && by !== null && by !== '') {
+    if (typeof by !== 'string' || by.length > 100) errors.push({ at: at + '.by', message: 'by(登録元)は100字以内の文字列です' });
+    else out.by = by.trim();
+  }
+  return out;
+}
+
 const CAUSE_WORDS = { cause: 'cause', causal: 'cause', '因果': 'cause', '原因': 'cause', parallel: 'parallel', '並行': 'parallel' };
 
 // 受け取る: { events: [{ id?, year, month?, day?, endYear?, endMonth?, endDay?, cat, title, detail? }],
-//            links:  [{ from, to, kind?: 'cause'|'parallel', note? }] }
+//            links:  [{ from, to, kind?: 'cause'|'parallel', note?, confidence? }],
+//            by?: '登録元(全件の既定)' }
+//   - 出来事にも関係にも memo(備考), sources(出典 [{title, url?, quote?}]), by(登録元)を付けられる。
 //   - year は紀元前を負の数(紀元前300年 = -300)。0年はない。
 //   - cat はカテゴリの id か名前。
 //   - id を付けると、その id の出来事を上書きする(再送しても重複しない)。省けば新しく作る。
@@ -260,9 +323,12 @@ function apiPost_(p, body) {
       const f = apiToForm_(x); f.cat = cat.id;
       const r = validateForm_(f, maxYear);
       if (!r.ev) { Object.keys(r.err).forEach(k => errors.push({ at: 'events[' + i + ']', message: r.err[k] })); return; }
+      const n0 = errors.length;
+      const prov = provenance_(x, 'events[' + i + ']', errors, req.by, false);
+      if (errors.length > n0) return;
       const id = x.id || ('api-' + Utilities.getUuid().replace(/-/g, '').slice(0, 12));
       seenIds[id] = true;
-      outEvents.push({ i: i, status: byId[id] ? 'updated' : 'added', data: Object.assign({ id: id }, r.ev) });
+      outEvents.push({ i: i, status: byId[id] ? 'updated' : 'added', data: Object.assign({ id: id }, r.ev, prov) });
     });
 
     // 関係の端点: 本文の出来事 → 既存の出来事、id → 題名の順で探す
@@ -278,7 +344,7 @@ function apiPost_(p, body) {
     };
     const links = liveRows_('links');
     const pairs = {};
-    links.forEach(l => { pairs[l.from + '\n' + l.to] = true; pairs[l.to + '\n' + l.from] = true; });
+    links.forEach(l => { pairs[l.from + '\n' + l.to] = l; pairs[l.to + '\n' + l.from] = l; });
     const outLinks = [];
     inLinks.forEach((x, i) => {
       if (!x || typeof x !== 'object') { errors.push({ at: 'links[' + i + ']', message: '関係はオブジェクトで送ってください' }); return; }
@@ -288,10 +354,26 @@ function apiPost_(p, body) {
       if (a.id === b.id) { errors.push({ at: 'links[' + i + ']', message: '同じ出来事どうしは結べません' }); return; }
       const kind = x.kind === undefined ? 'cause' : CAUSE_WORDS[String(x.kind).toLowerCase()] || CAUSE_WORDS[x.kind];
       if (!kind) { errors.push({ at: 'links[' + i + '].kind', message: 'kind は cause(因果)か parallel(並行)です' }); return; }
+      const n0 = errors.length;
+      const prov = provenance_(x, 'links[' + i + ']', errors, req.by, true);
+      if (errors.length > n0) return;
       const id = a.id + '>' + b.id;
-      if (pairs[a.id + '\n' + b.id]) { outLinks.push({ i: i, status: 'exists', id: id }); return; }
+      const prev = pairs[a.id + '\n' + b.id];
+      if (prev) {
+        // 既にある関係: 向きと説明はそのまま。根拠の欄が送られていれば足す(出典は重ならないように加える)
+        const hasProv = prov.memo || prov.sources || prov.confidence;
+        if (!hasProv || prev === true) { outLinks.push({ i: i, status: 'exists', id: prev.id || id }); return; }
+        const merged = Object.assign({}, prev, prov);
+        if (prev.memo && prov.memo && prev.memo !== prov.memo) merged.memo = prev.memo + '\n' + prov.memo;
+        if (prev.sources && prov.sources) {
+          const seen = {};
+          merged.sources = prev.sources.concat(prov.sources).filter(x => { const k = x.url || x.title; if (seen[k]) return false; seen[k] = true; return true; }).slice(0, 20);
+        }
+        outLinks.push({ i: i, status: 'updated', id: prev.id, data: merged });
+        return;
+      }
       pairs[a.id + '\n' + b.id] = true; pairs[b.id + '\n' + a.id] = true;
-      const data = { id: id, from: a.id, to: b.id, note: String(x.note || '').slice(0, 500), src: 'api' };
+      const data = Object.assign({ id: id, from: a.id, to: b.id, note: String(x.note || '').slice(0, 500), src: 'api' }, prov);
       if (kind === 'parallel') data.para = true;
       outLinks.push({ i: i, status: 'added', id: id, data: data });
     });

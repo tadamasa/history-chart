@@ -20,6 +20,7 @@ export function loadHub() {
     sh.api = {
       getRange: range,
       getLastRow: () => sh.rows.length,
+      getLastColumn: () => Math.max(0, ...sh.rows.map(r => (r ? r.length : 0))),
       getMaxRows: () => sh.maxRows,
       insertRowsAfter: (_, n) => { sh.maxRows += n; },
       setFrozenRows: n => { sh.frozen = n; },

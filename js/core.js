@@ -117,7 +117,7 @@ export function layout({ events, cats, hidden = {}, links, sel = null, pick = fa
   const rels = links.filter(l => pos[l.from] && pos[l.to] && (sel ? (l.from === sel || l.to === sel) : showLinks)).map(l => {
     const [ax, ay] = pos[l.from], [bx, by] = pos[l.to];
     const b = 16 + Math.min(26, Math.abs(by - ay) * 0.06);
-    return { d: `M${r1(ax)},${r1(ay)}C${r1(ax - b)},${r1(ay)} ${r1(bx - b)},${r1(by)} ${r1(bx)},${r1(by)}`, end: [r1(bx), r1(by)], ai: l.src === 'ai', strong: !!sel };
+    return { d: `M${r1(ax)},${r1(ay)}C${r1(ax - b)},${r1(ay)} ${r1(bx - b)},${r1(by)} ${r1(bx)},${r1(by)}`, end: [r1(bx), r1(by)], ai: l.src === 'ai', spec: l.confidence === 'speculative', strong: !!sel };
   });
   const totalH = Math.max(yAt(TMAX, zoom), maxBottom) + PADB;
   const lanes = vis.map((c, i) => ({ id: c.id, x: L0 + i * LW, w: LW, name: c.name, glyph: c.glyph }));
@@ -147,7 +147,7 @@ export function relationsOf(id, events, links) {
     const other = byId.get(l.from === id ? l.to : l.from);
     if (!other) return null;
     const dir = l.para ? '↔ 並行' : l.to === id ? '← 原因' : '→ 影響';
-    return { id: other.id, dir, title: other.title, date: fmtDate(other), note: l.note || '', ai: l.src === 'ai', src: l.src === 'ai' ? 'AI' : l.src === 'api' ? 'API' : '', t: tOf(other) };
+    return { id: other.id, dir, title: other.title, date: fmtDate(other), note: l.note || '', ai: l.src === 'ai', src: l.src === 'ai' ? 'AI' : l.src === 'api' ? 'API' : '', conf: CONF_LABEL[l.confidence] || '', memo: l.memo || '', sources: l.sources || [], by: l.by || '', t: tOf(other) };
   }).filter(Boolean).sort((a, b) => a.t - b.t);
 }
 
@@ -186,11 +186,16 @@ export function formOf(e) {
   return {
     era: e.y < 0 ? 'BC' : 'AD', year: String(Math.abs(e.y)), month: e.m ? String(e.m) : '', day: e.d ? String(e.d) : '',
     hasEnd: !!e.ey, eEra: e.ey < 0 ? 'BC' : 'AD', eYear: e.ey ? String(Math.abs(e.ey)) : '', eMonth: e.em ? String(e.em) : '', eDay: e.ed ? String(e.ed) : '',
-    title: e.title, detail: e.detail || '', cat: e.cat,
+    title: e.title, detail: e.detail || '', cat: e.cat, memo: e.memo || '',
   };
 }
 
 // ---- AI ----
+// 根拠の欄: 確からしさの表示名(ハブの CONF_LABEL と同じ)
+export const CONF_LABEL = { certain: '確実', likely: '有力', speculative: '推測' };
+// 出典のURLは http(s) のものだけリンクにする
+export const safeUrl = u => (typeof u === 'string' && /^https?:\/\/\S+$/.test(u) ? u : '');
+
 export const linkId = (from, to) => `${from}>${to}`;
 
 export function analysisPrompt(target, events, cats) {

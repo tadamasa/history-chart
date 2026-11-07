@@ -62,10 +62,13 @@ APIキーが漏れたかもしれないときは、`rotateApiKey` を実行す�
     { "year": 1961, "month": 5, "endYear": 1972, "endMonth": 12, "cat": "eng", "title": "アポロ計画(別資料)" }
   ],
   "links": [
-    { "from": "e26", "to": "moore", "kind": "cause", "note": "トランジスタの微細化が前提" },
+    { "from": "e26", "to": "moore", "kind": "cause", "note": "トランジスタの微細化が前提",
+      "confidence": "likely", "memo": "論文に直接の言及はなく、時期と技術の連続から判断",
+      "sources": [{ "title": "Moore, G. E. (1965) Cramming more components onto integrated circuits", "url": "https://…", "quote": "…roughly a factor of two per year." }] },
     { "from": "ムーアの法則", "to": "マイクロプロセッサ 4004" },
     { "from": "moore", "to": "e33", "kind": "parallel" }
-  ]
+  ],
+  "by": "claude-agent"
 }
 ```
 
@@ -79,11 +82,15 @@ APIキーが漏れたかもしれないときは、`rotateApiKey` を実行す�
 | `id` | 任意。英数字と `_.:-` の64文字以内。付けると、同じ id の出来事を上書きする(送り直しても重複しない)。省くと `api-…` が振られる |
 | `links[].from`, `to` | 出来事の id か題名(完全一致で1件だけのとき)。同じ本文の `events` も指せる |
 | `links[].kind` | `cause`(因果。from が原因、to が結果。省略時)か `parallel`(並行)。`因果` `原因` `並行` でもよい |
-| `links[].note` | 関係の説明(500字まで) |
+| `links[].note` | 関係の説明(500字まで)。アプリでは関係の一行目に出る |
+| `links[].confidence` | 確からしさ。`certain`(確実)・`likely`(有力)・`speculative`(推測)。日本語でもよい。推測の関係はアプリで点線になる |
+| `memo` | 備考・根拠(出来事にも関係にも。2000字まで)。判断の理由、異説、未確認の点など |
+| `sources` | 出典(出来事にも関係にも。10件まで)。`[{ "title": "書名や論文名", "url": "https://…", "quote": "根拠になる一文(500字まで)" }]`。`url` と `quote` は任意。URLだけの文字列でもよい |
+| `by` | 登録元(100字まで。例: `claude-agent`)。本文の一番外に書くと全件の既定になり、各項目に書けばそちらが優先 |
 
 - 入力の規則はアプリの追加フォームと同じです(同じ文言のエラーが返ります)。
 - **すべて検証してから書きます。** 1件でも誤りがあれば何も書かず、`{ ok:false, error:"invalid", errors:[{ at:"events[1]", message:"月は1〜12で入力してください" }] }` を返します。
-- 既にある組み合わせの関係は `status: "exists"` で飛ばします(向きが逆でも同じとみなす)。
+- 既にある組み合わせの関係は `status: "exists"` で飛ばします(向きが逆でも同じとみなす)。ただし `memo`・`sources`・`confidence` を付けて送ると、向きと説明はそのままで根拠だけを足し、`status: "updated"` を返します(出典は重ならないように追加、備考は改行して追記)。初期データの関係に、あとから出典を付けるときに使えます。
 - `&dryRun=1` を付けると、検証だけして書きません。
 - 1回に出来事200件・関係400件まで。アプリでは、APIから入った関係に「API」の印が付きます。
 
@@ -120,3 +127,9 @@ console.log(await res.json());
 ```
 
 ブラウザのページから呼ぶときは、事前確認(CORS)を避けるため `text/plain` で送ってください。
+
+### 他のAIに登録させるときのコツ
+
+- 関係には `confidence` と `sources` を必ず付けさせると、あとで「推測」の点線だけを見直す、という使い方ができます。
+- `quote` には出典の中の根拠となる一文をそのまま入れさせます。要約ではなく引用にしておくと、AIの思い違いを見つけやすくなります。
+- 先に `action=events` で今の出来事を渡し、重複を避けさせてから、`dryRun=1` で検証、問題なければ本番、の順にすると安全です。

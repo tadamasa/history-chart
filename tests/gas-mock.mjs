@@ -5,6 +5,7 @@ import vm from 'vm';
 export function loadHub() {
   const sheets = new Map();
   const props = {};
+  let uuidN = 0;
   const makeSheet = name => {
     const sh = { name, rows: [], maxRows: 1000, frozen: 0 };
     const range = (r, c, nr = 1, nc = 1) => {
@@ -31,7 +32,7 @@ export function loadHub() {
     PropertiesService: { getScriptProperties: () => ({ getProperty: k => props[k] ?? null, setProperty: (k, v) => { props[k] = String(v); } }) },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     ContentService: { createTextOutput: s => ({ text: s, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
-    Utilities: { getUuid: () => '1234-5678-abcd' },
+    Utilities: { getUuid: () => `${(++uuidN).toString(16).padStart(8, '0')}-aaaa-bbbb-cccc-dddddddddddd` },
     Logger: { log() {} },
   };
   vm.createContext(ctx);
@@ -40,6 +41,10 @@ export function loadHub() {
   return {
     token: props.TOKEN,
     sheets,
-    post: body => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).text),
+    post: body => JSON.parse(ctx.doPost({ parameter: {}, postData: { contents: JSON.stringify(body) } }).text),
+    api: (params, body) => JSON.parse(ctx.doPost({ parameter: params, postData: { contents: typeof body === 'string' ? body : JSON.stringify(body) } }).text),
+    apiGet: params => JSON.parse(ctx.doGet({ parameter: params }).text),
+    props,
+    ctx,
   };
 }

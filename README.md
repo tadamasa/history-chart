@@ -25,7 +25,7 @@
 | `js/text.js` | 画面の文言 |
 | `js/seed.js` | 初期データ(科学技術史43件・関係27件) |
 | `js/db.js` | IndexedDB(cats, events, links, ai, meta) |
-| `js/sync.js`, `hub/` | 自分のスプレッドシート+Apps Script を「年表ハブ」にした端末間同期。手順は [hub/README.md](hub/README.md) |
+| `js/sync.js`, `hub/` | 自分のスプレッドシート+Apps Script を「年表ハブ」にした端末間同期と、外部から出来事・因果関係を登録するAPI(別のAPIキーを `?key=` で渡す)。手順は [hub/README.md](hub/README.md) |
 | `js/gemini.js` | Gemini API を端末から自分のキーで直接呼ぶ(押したときだけ) |
 | `js/backup.js` | JSONで書き出し/読み込み(共有シート→iCloud Drive) |
 | `sw.js` | オフライン用。ネット優先→キャッシュ |

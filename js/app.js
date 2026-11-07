@@ -7,7 +7,7 @@ import { exportData, importData } from './backup.js';
 import { SEED_CATS, SEED_EVENTS, SEED_LINKS } from './seed.js';
 import { TEXT } from './text.js';
 
-const APP_VERSION = 'v1';
+const APP_VERSION = 'v2';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const svgG = (kind, size, r) => `<svg viewBox="0 0 ${size} ${size}" aria-hidden="true"><path d="${core.glyphD(kind, size / 2, size / 2, r)}"/></svg>`;
@@ -227,7 +227,7 @@ function detailHTML() {
     ${info?.summary ? `<div class="ai-box"><div class="h">${TEXT.aiSummary}</div><div class="b">${esc(info.summary)}</div></div>` : ''}
     <div>
       <div class="sec-h">${TEXT.relations} <span>${rels.length ? rels.length + '件' : ''}</span></div>
-      ${rels.length ? rels.map(r => `<button class="rel-row" data-act="goto" data-id="${esc(r.id)}"><span class="dir">${r.dir}</span><span class="tt">${esc(r.title)}<span class="dt">${esc(r.date)}</span>${r.ai ? '<span class="src">AI</span>' : ''}</span><span class="nt">${esc(r.note)}</span></button>`).join('') : `<p class="empty">${TEXT.noRelations}</p>`}
+      ${rels.length ? rels.map(r => `<button class="rel-row" data-act="goto" data-id="${esc(r.id)}"><span class="dir">${r.dir}</span><span class="tt">${esc(r.title)}<span class="dt">${esc(r.date)}</span>${r.src ? `<span class="src">${r.src}</span>` : ''}</span><span class="nt">${esc(r.note)}</span></button>`).join('') : `<p class="empty">${TEXT.noRelations}</p>`}
     </div>
     ${sugs.length ? `<div>
       <div class="sec-h">${TEXT.suggestions}</div>

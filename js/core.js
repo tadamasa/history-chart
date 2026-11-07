@@ -147,7 +147,7 @@ export function relationsOf(id, events, links) {
     const other = byId.get(l.from === id ? l.to : l.from);
     if (!other) return null;
     const dir = l.para ? '↔ 並行' : l.to === id ? '← 原因' : '→ 影響';
-    return { id: other.id, dir, title: other.title, date: fmtDate(other), note: l.note || '', ai: l.src === 'ai', t: tOf(other) };
+    return { id: other.id, dir, title: other.title, date: fmtDate(other), note: l.note || '', ai: l.src === 'ai', src: l.src === 'ai' ? 'AI' : l.src === 'api' ? 'API' : '', t: tOf(other) };
   }).filter(Boolean).sort((a, b) => a.t - b.t);
 }
 

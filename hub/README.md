@@ -39,3 +39,84 @@ Code.gs を貼り替えて保存したら、「デプロイ」→「デプロイ
 - `deleted` が `true` の行は削除済みです。
 - 最後の `json` 列がアプリの元データです。表を手で書き換えても、アプリには反映されません。
 - 列は見出しの名前で探してください(列番号で読むと、列が増えたときに壊れます)。
+
+## 外部から登録するAPI(出来事と因果関係)
+
+ほかのプログラム(スクリプト、ショートカット、AIエージェントなど)から、出来事と関係をまとめて年表に入れるための口です。アプリの同期と同じウェブアプリのURLに、**同期の合言葉とは別の「APIキー」**を `?key=` で付けて呼びます。登録したものは、各端末が次に同期したとき(開いたとき・戻ったとき)に届きます。
+
+### 準備
+
+1. Code.gs を最新に貼り替えて保存し、`setup` をもう一度実行します。実行ログに「APIキー(外部からの登録用): hc_…」が出ます。すでにある合言葉は変わりません。権限は増えていないので、承認のやり直しは要りません。
+2. 「デプロイを管理」→ 鉛筆 →「新バージョン」→「デプロイ」。URLは変わりません。
+3. 先にアプリを一度ハブに接続しておくと、初期データの出来事(`e26` など)やカテゴリを、id や題名で関係の端点に使えます。
+
+APIキーが漏れたかもしれないときは、`rotateApiKey` を実行すると新しいキーに替わり、古いキーは使えなくなります(アプリの同期はそのまま)。URLに入れたキーは、呼び出し側の履歴やログに残りやすいので、他の人と共有する場所には書かないでください。
+
+### 登録する: POST `…/exec?key=APIキー`
+
+```json
+{
+  "events": [
+    { "id": "moore", "year": 1965, "month": 4, "day": 19, "cat": "info", "title": "ムーアの法則", "detail": "集積度は約2年で倍になる" },
+    { "year": -221, "cat": "工学・エネルギー", "title": "始皇帝の度量衡統一" },
+    { "year": 1961, "month": 5, "endYear": 1972, "endMonth": 12, "cat": "eng", "title": "アポロ計画(別資料)" }
+  ],
+  "links": [
+    { "from": "e26", "to": "moore", "kind": "cause", "note": "トランジスタの微細化が前提" },
+    { "from": "ムーアの法則", "to": "マイクロプロセッサ 4004" },
+    { "from": "moore", "to": "e33", "kind": "parallel" }
+  ]
+}
+```
+
+| 欄 | 意味 |
+|---|---|
+| `events[].year` | 必須。紀元前は負の数(紀元前300年 = `-300`)。0年はない。範囲は紀元前3300年〜今年 |
+| `month`, `day` | 任意。日を入れるなら月も必須 |
+| `endYear`, `endMonth`, `endDay` | 期間の終わり。入れると期間を持つ出来事になる。終わりは始まりより後 |
+| `cat` | 必須。カテゴリの id(`phys` `life` `info` `eng` など)か名前 |
+| `title`, `detail` | 題名(必須)と詳細 |
+| `id` | 任意。英数字と `_.:-` の64文字以内。付けると、同じ id の出来事を上書きする(送り直しても重複しない)。省くと `api-…` が振られる |
+| `links[].from`, `to` | 出来事の id か題名(完全一致で1件だけのとき)。同じ本文の `events` も指せる |
+| `links[].kind` | `cause`(因果。from が原因、to が結果。省略時)か `parallel`(並行)。`因果` `原因` `並行` でもよい |
+| `links[].note` | 関係の説明(500字まで) |
+
+- 入力の規則はアプリの追加フォームと同じです(同じ文言のエラーが返ります)。
+- **すべて検証してから書きます。** 1件でも誤りがあれば何も書かず、`{ ok:false, error:"invalid", errors:[{ at:"events[1]", message:"月は1〜12で入力してください" }] }` を返します。
+- 既にある組み合わせの関係は `status: "exists"` で飛ばします(向きが逆でも同じとみなす)。
+- `&dryRun=1` を付けると、検証だけして書きません。
+- 1回に出来事200件・関係400件まで。アプリでは、APIから入った関係に「API」の印が付きます。
+
+成功すると次のように返ります。
+
+```json
+{ "ok": true, "dryRun": false,
+  "events": [{ "index": 0, "id": "moore", "title": "ムーアの法則", "status": "added" }, …],
+  "links":  [{ "index": 0, "id": "e26>moore", "status": "added" }, …] }
+```
+
+### 調べる: GET
+
+- `…/exec?key=APIキー&action=cats` … カテゴリの id と名前
+- `…/exec?key=APIキー&action=events` … 出来事の id・年・題名の一覧(関係の端点を探すのに使う)
+
+### 呼び方の例
+
+Apps Script は応答の前に一度リダイレクトするので、curl では `-L` を付けます(本文の形式は `text/plain` でも `application/json` でも受け付けます)。
+
+```sh
+URL='https://script.google.com/macros/s/…/exec'
+KEY='hc_…'
+curl -sL "$URL?key=$KEY&action=cats"
+curl -sL -H 'Content-Type: application/json' -d @events.json "$URL?key=$KEY&dryRun=1"   # まず検証
+curl -sL -H 'Content-Type: application/json' -d @events.json "$URL?key=$KEY"            # 登録
+```
+
+JavaScript(Node など)なら:
+
+```js
+const res = await fetch(`${URL}?key=${KEY}`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ events, links }), redirect: 'follow' });
+console.log(await res.json());
+```
+
+ブラウザのページから呼ぶときは、事前確認(CORS)を避けるため `text/plain` で送ってください。

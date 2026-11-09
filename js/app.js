@@ -7,7 +7,7 @@ import { exportData, importData } from './backup.js';
 import { SEED_CATS, SEED_EVENTS, SEED_LINKS } from './seed.js';
 import { TEXT } from './text.js';
 
-const APP_VERSION = 'v3';
+const APP_VERSION = 'v4';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const svgG = (kind, size, r) => `<svg viewBox="0 0 ${size} ${size}" aria-hidden="true"><path d="${core.glyphD(kind, size / 2, size / 2, r)}"/></svg>`;
@@ -421,6 +421,7 @@ function settingsHTML() {
       <div class="row"><button class="btn btn-primary" data-act="sync-connect">接続して同期する</button>${sc.url ? '<button class="btn btn-secondary" data-act="sync-now">今すぐ同期</button><button class="btn btn-secondary" data-act="sync-off">切断</button>' : ''}</div>
       <div class="set-status" id="sync-status"></div>
     </div>
+    ${sampleHTML()}
     <div class="set-sec">
       <div class="sec-h">バックアップ</div>
       <p>${TEXT.backupNote}</p>
@@ -429,6 +430,19 @@ function settingsHTML() {
     </div>
     <p class="sh-note">年表 ${APP_VERSION} · 書体 Barlow(SIL OFL)</p>
   </div>`;
+}
+function sampleTargetsNow() {
+  return core.sampleTargets(S.events, S.links, S.ai, SEED_EVENTS.map(e => e.id), SEED_LINKS.map(l => l.id));
+}
+function sampleHTML() {
+  const t = sampleTargetsNow();
+  if (!t.eventIds.length && !t.linkIds.length) return '';
+  return `<div class="set-sec">
+      <div class="sec-h">${TEXT.sampleTitle}</div>
+      <p>${esc(TEXT.sampleNote(t.eventIds.length, t.linkIds.length))}</p>
+      <div class="row"><button class="btn btn-secondary" data-act="sample-del" id="sample-del">${TEXT.sampleBtn}</button></div>
+      <div class="set-status" id="sample-status"></div>
+    </div>`;
 }
 function renderSyncStatus() {
   const el = $('sync-status');
@@ -625,6 +639,30 @@ const actions = {
   async 'sync-off'() { await sync.disconnect(); renderSheet(); },
   async export() {
     try { if (await exportData()) $('backup-status').textContent = '書き出しました'; } catch (e) { $('backup-status').textContent = e.message; }
+  },
+  // 2段階: 1回目で確認の表示に変え、2回目で消す。消したものは同期で他の端末とハブからも消える
+  async 'sample-del'(el) {
+    const t = sampleTargetsNow();
+    if (!el.dataset.armed) {
+      el.dataset.armed = '1';
+      el.classList.replace('btn-secondary', 'btn-primary');
+      el.textContent = TEXT.sampleConfirm(t.eventIds.length);
+      return;
+    }
+    const ev = new Set(t.eventIds), ln = new Set(t.linkIds);
+    S.events = S.events.filter(e => !ev.has(e.id));
+    S.links = S.links.filter(l => !ln.has(l.id));
+    const ai = { ...S.ai }; t.aiIds.forEach(id => delete ai[id]); S.ai = ai;
+    S.sel = null;
+    await db.delMany('events', t.eventIds);
+    await db.delMany('links', t.linkIds);
+    await db.delMany('ai', t.aiIds);
+    await db.setMeta('samplesRemovedAt', new Date().toISOString());
+    renderTimeline();
+    renderSheet();
+    const st = $('backup-status');
+    if (st) st.textContent = TEXT.sampleDone(t.eventIds.length, t.linkIds.length);
+    sync.schedule(500);
   },
   'hide-warning'() { $('tab-warning').hidden = true; try { sessionStorage.setItem('hideTabWarning', '1'); } catch {} },
 };

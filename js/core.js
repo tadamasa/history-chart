@@ -282,3 +282,14 @@ export function catDeleteBlock(cat, cats, events) {
   if (cats.length <= 1) return 'カテゴリは1件以上必要です。';
   return '';
 }
+
+// サンプル(初期データ)を消すときの対象。初期データのidの出来事と、それに触れる関係・AIの解説、初期データの関係。
+// カテゴリはレーンとして使い続けるので残す。
+export function sampleTargets(events, links, ai, seedEventIds, seedLinkIds) {
+  const seedEv = new Set(seedEventIds), seedLn = new Set(seedLinkIds);
+  const eventIds = events.filter(e => seedEv.has(e.id)).map(e => e.id);
+  const gone = new Set(eventIds);
+  const linkIds = links.filter(l => seedLn.has(l.id) || gone.has(l.from) || gone.has(l.to)).map(l => l.id);
+  const aiIds = Object.keys(ai).filter(id => gone.has(id));
+  return { eventIds, linkIds, aiIds };
+}

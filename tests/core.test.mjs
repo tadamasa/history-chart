@@ -153,3 +153,14 @@ test('記号は8種を順に回る', () => {
   assert.equal(g, 'circle');
   for (const k of core.GLYPHS) assert.match(core.glyphD(k, 6, 6, 3), /^M/);
 });
+
+test('サンプルを消す対象: 初期データの出来事・関係と、それに触れるAPIの関係・AIの解説。ほかは残す', () => {
+  const events = [...SEED_EVENTS, { id: 'mine', y: 1965, cat: 'info', title: '自分の' }, { id: 'mine2', y: 1970, cat: 'info', title: '自分の2' }];
+  const links = [...SEED_LINKS, { id: 'e26>mine', from: 'e26', to: 'mine' }, { id: 'mine>mine2', from: 'mine', to: 'mine2' }];
+  const ai = { e27: { id: 'e27' }, mine: { id: 'mine' } };
+  const t = core.sampleTargets(events, links, ai, SEED_EVENTS.map(e => e.id), SEED_LINKS.map(l => l.id));
+  assert.equal(t.eventIds.length, 43);
+  assert.equal(t.linkIds.length, 28);
+  assert.ok(!t.linkIds.includes('mine>mine2'));
+  assert.deepEqual(t.aiIds, ['e27']);
+});

@@ -2,6 +2,8 @@
 export const TEXT = {
   subject: '科学技術史',
   zoomLabel: '表示幅',
+  textSizeTitle: '文字の大きさ',
+  textSizeNote: '年表のカード・左の年・レーン名と、シートの本文の大きさを変えます。この端末だけの設定で、同期はしません。',
   fitRel: 'この出来事と関係先が収まる幅にする',
   fitHits: '年表で範囲を表示',
   analyze: 'AIで関係を紐解く',

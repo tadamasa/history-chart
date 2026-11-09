@@ -7,7 +7,7 @@ import { exportData, importData } from './backup.js';
 import { SEED_CATS, SEED_EVENTS, SEED_LINKS } from './seed.js';
 import { TEXT } from './text.js';
 
-const APP_VERSION = 'v6';
+const APP_VERSION = 'v7';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const svgG = (kind, size, r) => `<svg viewBox="0 0 ${size} ${size}" aria-hidden="true"><path d="${core.glyphD(kind, size / 2, size / 2, r)}"/></svg>`;
@@ -30,7 +30,7 @@ const ICON = {
 // ---- 状態 ----
 const S = {
   cats: [], events: [], links: [], ai: {},
-  hidden: {}, zoom: core.PPY0, sel: null, sheet: null, sheetOpen: false,
+  hidden: {}, zoom: core.PPY0, textSize: core.TS_DEFAULT, sel: null, sheet: null, sheetOpen: false,
   pick: false, compare: null, chat: [], chatBusy: false, aiBusy: false, aiErr: '', aiErrKey: false,
   showLinks: true, flash: null, editId: null, catMsg: '', L: null, query: '', hits: [],
 };
@@ -68,14 +68,17 @@ function renderTimeline() {
   S.L = L;
   const canvas = $('canvas');
   canvas.style.width = width + 'px';
-  canvas.style.height = L.totalH + 'px';
+  $('app').style.setProperty('--ts', L.ts);
+  $('app').style.setProperty('--ax', L.AX + 'px');
+  // iPhoneでシートが開いている間は、終わり近くの年もシートより上まで送れるよう下に余白を足す
+  canvas.style.height = L.totalH + (S.sheetOpen && !isWide() ? Math.round(viewH() * 0.7) : 0) + 'px';
 
   $('guides').innerHTML = L.lanes.map(l => `<div class="guide" style="left:${l.x}px"></div>`).join('');
 
   const svgAttr = `width="${width}" height="${L.totalH}" viewBox="0 0 ${width} ${L.totalH}"`;
   const bars = L.bars.map(b => {
     const c = `${b.sel ? ' sel' : ''}${b.dim ? ' dim' : ''}`;
-    return `<rect class="bar${c}" x="${b.x}" y="${b.y}" width="3" height="${b.h}"/><path class="bar-end${c}" d="M${core.AX},${b.y + b.h}H${b.x + 3}M${b.x - 3},${b.y + b.h}H${b.x + 6}"/>`;
+    return `<rect class="bar${c}" x="${b.x}" y="${b.y}" width="3" height="${b.h}"/><path class="bar-end${c}" d="M${L.AX},${b.y + b.h}H${b.x + 3}M${b.x - 3},${b.y + b.h}H${b.x + 6}"/>`;
   }).join('');
   const lds = L.leaders.map(l => `<path class="ld${l.sel ? ' sel' : ''}${l.dim ? ' dim' : ''}" d="${l.d}"/>`).join('');
   const mks = L.markers.map(m => `<path class="mk${m.sel ? ' sel' : ''}${m.dim ? ' dim' : ''}" d="${m.d}"/>`).join('');
@@ -91,7 +94,7 @@ function renderTimeline() {
   // カードはidで使い回し、選択・減光の切り替えにCSSの遷移を効かせる
   const box = $('cards');
   const old = new Map([...box.children].map(el => [el.dataset.id, el]));
-  const narrow = L.LW < 70;
+  const narrow = L.LW < 52 * L.ts, short = L.LW < 110 * L.ts;
   for (const c of L.cards) {
     let el = old.get(c.id);
     if (el) old.delete(c.id);
@@ -108,7 +111,8 @@ function renderTimeline() {
     el.classList.toggle('dim', c.dim);
     el.classList.toggle('flash', c.flash);
     el.classList.toggle('narrow', narrow);
-    if (el.firstChild.textContent !== c.date) el.firstChild.textContent = c.date;
+    const d = short ? c.short : c.date;
+    if (el.firstChild.textContent !== d) el.firstChild.textContent = d;
     if (el.lastChild.textContent !== c.title) el.lastChild.textContent = c.title;
     el.setAttribute('aria-label', `${c.date} ${c.title}`);
   }
@@ -138,7 +142,7 @@ function renderScroll(force = false) {
     lastTickY = st;
     const { ticks, bands } = core.ticksIn(st - 450, st + vh + 450, S.zoom);
     $('bands').innerHTML = bands.map(b => `<div class="band" style="top:${b.top}px;height:${b.h}px"></div>`).join('');
-    $('ticks').innerHTML = ticks.map(t => `<div class="tick-l" style="top:${t.y - 7}px">${t.label}</div><div class="tick-m" style="top:${t.y}px"></div>`).join('');
+    $('ticks').innerHTML = ticks.map(t => `<div class="tick-l" style="top:${t.y}px">${t.label}</div><div class="tick-m" style="top:${t.y}px"></div>`).join('');
   }
   const { above, below } = core.offscreen(S.L.cards, S.L.lanes, st, vh);
   const badge = (b, up) => `<button class="badge" style="left:${b.x}px" data-act="jump" data-top="${b.jump}" aria-label="${up ? 'この上' : 'この下'}の出来事 ${b.n}件">${up ? ICON.up : ICON.down}<svg class="g" viewBox="0 0 12 12"><path d="${core.glyphD(b.glyph, 6, 6, 3.4)}"/></svg>${b.n}</button>`;
@@ -185,7 +189,7 @@ function animateZoom(ppy, { anchor = viewH() / 2, center = null } = {}) {
 // 合わせ込みの対象: 比較中はその2つ、強調中(選択・検索)は濃く残っている出来事、なければ表示中の全部
 function layoutArgs(ppy = S.zoom) {
   const match = S.sheet === 'search' && S.sheetOpen && S.query.trim() ? new Set(S.hits.map(h => h.id)) : null;
-  return { events: S.events, cats: S.cats, hidden: S.hidden, links: S.links, sel: S.sel, pick: S.pick, flash: S.flash, zoom: ppy, width: tlWidth(), showLinks: S.showLinks, match };
+  return { events: S.events, cats: S.cats, hidden: S.hidden, links: S.links, sel: S.sel, pick: S.pick, flash: S.flash, zoom: ppy, width: tlWidth(), showLinks: S.showLinks, match, ts: core.tsOf(S.textSize) };
 }
 function fitTargets() {
   if (S.sheet === 'chat' && S.sheetOpen && S.compare) return S.compare.map(evById).filter(Boolean);
@@ -202,7 +206,7 @@ function visibleH() {
 }
 function fitZoom() {
   const h = visibleH(), evs = fitTargets();
-  const f = core.refineFit(core.fitView(evs, h, { margin: 30 }), new Set(evs.map(e => e.id)), h, ppy => core.layout(layoutArgs(ppy)));
+  const f = core.refineFit(core.fitView(evs, h, { margin: 30, cardH: core.geom(core.tsOf(S.textSize)).cardH }), new Set(evs.map(e => e.id)), h, ppy => core.layout(layoutArgs(ppy)));
   if (f) animateZoom(f.ppy, { anchor: h / 2, center: f.center });
 }
 
@@ -470,6 +474,11 @@ function settingsHTML() {
     <h2 class="sh-h">設定</h2>
     <div class="set-sec"><div class="sec-h">${TEXT.storyTitle}</div>${TEXT.story.map(p => `<p class="story">${esc(p)}</p>`).join('')}</div>
     <div class="set-sec">
+      <div class="sec-h">${TEXT.textSizeTitle}</div>
+      <p>${TEXT.textSizeNote}</p>
+      <div class="tsize" role="radiogroup" aria-label="${TEXT.textSizeTitle}">${core.TEXT_SCALES.map(x => `<button class="seg-b${S.textSize === x.id ? ' on' : ''}" role="radio" aria-checked="${S.textSize === x.id}" data-act="text-size" data-size="${x.id}" style="--s:${x.ts}">${x.label}<span>1969 月面着陸</span></button>`).join('')}</div>
+    </div>
+    <div class="set-sec">
       <div class="sec-h">AI(Gemini)</div>
       <p>${TEXT.geminiNote}</p>
       <div class="field"><label>APIキー</label><input class="input" id="gkey" type="password" autocomplete="off" value="${esc(cfg.key)}" placeholder="AIza…"></div>
@@ -657,6 +666,15 @@ const actions = {
   'zoom-in'() { animateZoom(S.zoom * core.ZOOM_STEP); },
   'zoom-out'() { animateZoom(S.zoom / core.ZOOM_STEP); },
   fit() { fitZoom(); },
+  async 'text-size'(el) {
+    const id = el.dataset.size;
+    if (id === S.textSize) return;
+    const t = core.tAt($('scroller').scrollTop + viewH() / 2, S.zoom);
+    S.textSize = id;
+    await db.setMeta('textSize', id);
+    renderTimeline(); measure(); centerOn(t); renderScroll(true);
+    document.querySelectorAll('.seg-b').forEach(b => { const on = b.dataset.size === id; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
+  },
   analyze() { analyze(); },
   pick() {
     const e = evById(S.sel);
@@ -843,6 +861,7 @@ async function boot() {
   await loadAll();
   cfg.key = await db.getMeta('geminiKey', '') || '';
   cfg.model = await db.getMeta('geminiModel', '') || gemini.DEFAULT_MODEL;
+  S.textSize = await db.getMeta('textSize', '') || core.TS_DEFAULT;
 
   measure();
   bindScroller();

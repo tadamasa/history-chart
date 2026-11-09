@@ -18,6 +18,15 @@ export const PADB = 170; // 下の余白
 export const L0 = 60; // 最初のレーンの左端
 export const CARD_H = 50;
 export const CARD_GAP = 6;
+// 文字の大きさ(設定)。ts は年表の文字の倍率。カードの高さと時間軸の位置(左の年の幅)が一緒に変わる。
+export const TEXT_SCALES = [{ id: 's', label: '標準', ts: 1 }, { id: 'm', label: '大', ts: 1.15 }, { id: 'l', label: '特大', ts: 1.3 }];
+export const TS_DEFAULT = 'm';
+export const tsOf = id => (TEXT_SCALES.find(x => x.id === id) || TEXT_SCALES.find(x => x.id === TS_DEFAULT)).ts;
+// カード = 上下の余白8 + 日付13 + 隙間1 + 題名2行28 を倍率で。軸は年の欄(44px)の伸びぶん右へ。
+export function geom(ts = 1) {
+  const ax = Math.round(AX + 44 * (ts - 1));
+  return { ts, AX: ax, L0: ax + (L0 - AX), cardH: Math.round(9 + 41 * ts) };
+}
 export const MAX_CATS = 8;
 
 // ---- 記号 ----
@@ -43,6 +52,8 @@ export function fmtRange(e, long = false) {
   const dur = e.ey - e.y - (e.y < 0 && e.ey > 0 ? 1 : 0); // 紀元0年はない
   return fmtDate(e) + ' 〜 ' + b + (dur > 0 ? `（${dur}年間）` : '');
 }
+// 幅の狭いカード用: 年だけ(紀元前は「前」)
+export const fmtShort = e => { const f = y => (y < 0 ? `前${-y}` : `${y}`); return e.ey && e.ey !== e.y ? `${f(e.y)}–${f(e.ey)}` : f(e.y); };
 export const tOf = e => e.y + (e.m ? (e.m - 1) / 12 + (e.d ? (e.d - 1) / 365 : 0.04) : 0.5);
 export const tEnd = e => e.ey + (e.em ? (e.em - 1) / 12 + (e.ed ? (e.ed - 1) / 365 : 1 / 12) : 1);
 export const tickLabel = t => (t < 0 ? `前${-t}` : `${t === 0 ? 1 : t}`);
@@ -73,12 +84,12 @@ export function zoomLabel(viewH, ppy) {
 
 // 表示幅の合わせ込み: 出来事の範囲(期間は終わりまで)が画面の上下に余白を残して収まる ppy と中央の年。
 // 1件だけ・同じ年ばかりなら前後 minSpan/2 年を見せる。
-export function fitView(events, viewH, { margin = 90, minSpan = 20 } = {}) {
+export function fitView(events, viewH, { margin = 90, minSpan = 20, cardH = CARD_H } = {}) {
   if (!events.length) return null;
   let a = Infinity, b = -Infinity;
   for (const e of events) { a = Math.min(a, tOf(e)); b = Math.max(b, e.ey ? tEnd(e) : tOf(e)); }
   const span = Math.max(b - a, minSpan);
-  const usable = Math.max(120, viewH - margin * 2 - CARD_H);
+  const usable = Math.max(120, viewH - margin * 2 - cardH);
   return { ppy: clampPpy(usable / span), center: (a + b) / 2, tspan: span };
 }
 // fitView は時間だけで縮尺を決めるので、同じ頃の出来事がレーンで縦に積まれると画面からはみ出す。
@@ -130,7 +141,8 @@ export const sortCats = cats => [...cats].sort((a, b) => (a.order ?? 0) - (b.ord
 // ---- 年表全体の配置 ----
 // width: 年表の幅(iPadでパネルを開いたときは残りの幅)
 // match: 検索中なら当たった出来事のidの集合(それ以外を薄くする)
-export function layout({ events, cats, hidden = {}, links, sel = null, pick = false, flash = null, zoom = PPY0, width = 402, showLinks = true, match = null }) {
+export function layout({ events, cats, hidden = {}, links, sel = null, pick = false, flash = null, zoom = PPY0, width = 402, showLinks = true, match = null, ts = 1 }) {
+  const { AX, L0, cardH: CARD_H } = geom(ts);
   const vis = sortCats(cats).filter(c => !hidden[c.id]);
   const n = Math.max(1, vis.length);
   const idx = Object.fromEntries(vis.map((c, i) => [c.id, i]));
@@ -138,7 +150,7 @@ export function layout({ events, cats, hidden = {}, links, sel = null, pick = fa
   const LW = (width - 8 - L0) / n;
   const evs = events.filter(e => idx[e.cat] !== undefined).map(e => ({ ...e, src: e, y: yAt(tOf(e), zoom), y2: e.ey ? yAt(tEnd(e), zoom) : null }));
   const tops = {};
-  vis.forEach(c => Object.assign(tops, place(evs.filter(e => e.cat === c.id).map(e => ({ id: e.id, y: e.y })))));
+  vis.forEach(c => Object.assign(tops, place(evs.filter(e => e.cat === c.id).map(e => ({ id: e.id, y: e.y })), CARD_H)));
 
   const related = new Set();
   if (sel) links.forEach(l => { if (l.from === sel) related.add(l.to); if (l.to === sel) related.add(l.from); });
@@ -154,7 +166,7 @@ export function layout({ events, cats, hidden = {}, links, sel = null, pick = fa
     markers.push({ d: glyphD(glyphOf[e.cat], AX, r1(e.y), isSel ? 4.5 : 3.4), dim, sel: isSel });
     if (e.y2) bars.push({ x: lx + 3, y: e.y, h: Math.max(2, e.y2 - e.y), dim, sel: isSel });
     pos[e.id] = [x, cy];
-    return { id: e.id, cat: e.cat, x, w, top, h: CARD_H, date: fmtRange(e.src), title: e.title, dim, sel: isSel, flash: flash === e.id };
+    return { id: e.id, cat: e.cat, x, w, top, h: CARD_H, date: fmtRange(e.src), short: fmtShort(e.src), title: e.title, dim, sel: isSel, flash: flash === e.id };
   });
   const rels = links.filter(l => pos[l.from] && pos[l.to] && (sel ? (l.from === sel || l.to === sel) : showLinks)).map(l => {
     const [ax, ay] = pos[l.from], [bx, by] = pos[l.to];
@@ -163,7 +175,7 @@ export function layout({ events, cats, hidden = {}, links, sel = null, pick = fa
   });
   const totalH = Math.max(yAt(TMAX, zoom), maxBottom) + PADB;
   const lanes = vis.map((c, i) => ({ id: c.id, x: L0 + i * LW, w: LW, name: c.name, glyph: c.glyph }));
-  return { cards, leaders, markers, bars, rels, totalH, lanes, LW, visibleCount: evs.length };
+  return { cards, leaders, markers, bars, rels, totalH, lanes, LW, AX, ts, visibleCount: evs.length };
 }
 const r1 = v => Math.round(v * 10) / 10;
 

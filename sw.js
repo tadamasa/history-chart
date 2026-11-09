@@ -1,6 +1,6 @@
 // アプリ本体をキャッシュして、電波がなくても開けるようにする。AI(Gemini)や年表ハブはキャッシュしない。
 // 出すたびに VERSION を上げ、ファイルを足したら SHELL にも足す。
-const VERSION = 'v6';
+const VERSION = 'v7';
 const PREFIX = 'history-chart-';
 const CACHE = `${PREFIX}${VERSION}`;
 const SHELL = [

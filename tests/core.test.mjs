@@ -228,3 +228,23 @@ test('積み上がりを見て合わせ込みを詰める', () => {
   const c2 = core.layout({ events: few, cats, links: [], zoom: fs.ppy, width: 402 }).cards, s0 = core.yAt(fs.center, fs.ppy) - viewH / 2;
   assert.ok(c2.every(c => c.top >= s0 && c.top + c.h <= s0 + viewH));
 });
+
+test('文字の大きさでカードの高さと軸が変わる', () => {
+  assert.equal(core.geom(1).cardH, core.CARD_H);
+  assert.equal(core.geom(1).AX, core.AX);
+  assert.ok(core.geom(1.3).cardH > core.geom(1.15).cardH && core.geom(1.15).AX > core.AX);
+  assert.equal(core.tsOf('xx'), core.tsOf(core.TS_DEFAULT));
+  const cats = [{ id: 'c', name: 'C', glyph: 'circle', order: 0 }];
+  const evs = [{ id: 'a', y: 1900, cat: 'c' }, { id: 'b', y: 1900, cat: 'c' }];
+  const L = core.layout({ events: evs, cats, links: [], zoom: 2, width: 402, ts: 1.3 });
+  const [p, q] = L.cards.sort((x, y) => x.top - y.top);
+  assert.equal(p.h, core.geom(1.3).cardH);
+  assert.ok(q.top - p.top >= p.h); // 大きくしても重ならない
+  assert.ok(L.lanes[0].x > core.L0);
+});
+
+test('狭いカードの年表記', () => {
+  assert.equal(core.fmtShort({ y: 1969, m: 7, d: 20 }), '1969');
+  assert.equal(core.fmtShort({ y: -300 }), '前300');
+  assert.equal(core.fmtShort({ y: 1543, ey: 1687 }), '1543–1687');
+});

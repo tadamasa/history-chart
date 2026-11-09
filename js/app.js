@@ -7,7 +7,7 @@ import { exportData, importData } from './backup.js';
 import { SEED_CATS, SEED_EVENTS, SEED_LINKS } from './seed.js';
 import { TEXT } from './text.js';
 
-const APP_VERSION = 'v4';
+const APP_VERSION = 'v5';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const svgG = (kind, size, r) => `<svg viewBox="0 0 ${size} ${size}" aria-hidden="true"><path d="${core.glyphD(kind, size / 2, size / 2, r)}"/></svg>`;
@@ -31,7 +31,7 @@ const S = {
   cats: [], events: [], links: [], ai: {},
   hidden: {}, zoom: core.ZOOM0, sel: null, sheet: null, sheetOpen: false,
   pick: false, compare: null, chat: [], chatBusy: false, aiBusy: false, aiErr: '', aiErrKey: false,
-  showLinks: true, flash: null, editId: null, catMsg: '', L: null,
+  showLinks: true, flash: null, editId: null, catMsg: '', L: null, query: '', hits: [],
 };
 const cfg = { key: '', model: gemini.DEFAULT_MODEL };
 
@@ -64,7 +64,8 @@ function viewH() { return $('scroller').clientHeight || 700; }
 
 function renderTimeline() {
   const width = tlWidth();
-  const L = core.layout({ events: S.events, cats: S.cats, hidden: S.hidden, links: S.links, sel: S.sel, pick: S.pick, flash: S.flash, zoom: S.zoom, width, showLinks: S.showLinks });
+  const match = S.sheet === 'search' && S.sheetOpen && S.query.trim() ? new Set(S.hits.map(h => h.id)) : null;
+  const L = core.layout({ events: S.events, cats: S.cats, hidden: S.hidden, links: S.links, sel: S.sel, pick: S.pick, flash: S.flash, zoom: S.zoom, width, showLinks: S.showLinks, match });
   S.L = L;
   const canvas = $('canvas');
   canvas.style.width = width + 'px';
@@ -196,7 +197,7 @@ function closeSheet({ keepSel = false } = {}) {
 
 function renderSheet() {
   const body = $('sheet-body');
-  const fn = { detail: detailHTML, add: formHTML, cats: catsHTML, chat: chatHTML, settings: settingsHTML }[S.sheet];
+  const fn = { detail: detailHTML, add: formHTML, cats: catsHTML, chat: chatHTML, settings: settingsHTML, search: searchHTML }[S.sheet];
   body.innerHTML = fn ? fn() : '';
   if (S.sheet === 'chat') scrollChat();
   if (S.sheet === 'settings') renderSyncStatus();
@@ -235,6 +236,32 @@ function detailHTML() {
       ${sugs.map((s, i) => `<div class="sug"><div class="m"><span class="tt">${esc(s.title)} <span class="dt">${esc(core.fmtYear(s.year))} · ${esc(catById(s.cat)?.name || '')}</span></span><span class="nt">${esc(s.reason)}</span></div><button class="btn btn-secondary" data-act="add-sug" data-i="${i}">追加</button></div>`).join('')}
     </div>` : ''}
   </div>`;
+}
+
+// 検索。入力欄は作り直さず、結果の欄だけ差し替える
+function searchHTML() {
+  return `<div class="sh-body search">
+    <h2 class="sh-h">${TEXT.searchTitle}</h2>
+    <div class="search-box"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input class="input" id="q" type="search" placeholder="${TEXT.searchPh}" value="${esc(S.query)}" autocomplete="off" enterkeyhint="search"></div>
+    <div id="hits">${hitsHTML()}</div>
+  </div>`;
+}
+function hitsHTML() {
+  if (!S.query.trim()) return `<p class="empty">${TEXT.searchHint}</p>`;
+  if (!S.hits.length) return `<p class="empty">${TEXT.searchNone}</p>`;
+  return `<div class="sec-h">${TEXT.searchCount(S.hits.length)}</div>` + S.hits.slice(0, 200).map((h, i) => {
+    const e = evById(h.id), c = catById(e.cat) || { name: '', glyph: 'circle' };
+    return `<button class="hit${S.hidden[e.cat] ? ' hidden-cat' : ''}" data-act="hit" data-id="${esc(e.id)}" style="--i:${Math.min(i, 12)}"><span class="hg">${svgG(c.glyph, 12, 3.6)}</span><span class="hm"><span class="dt">${esc(core.fmtRange(e))} · ${esc(c.name)}</span><span class="tt">${esc(e.title)}</span>${h.snippet ? `<span class="sn">${esc(h.snippet)}</span>` : ''}</span></button>`;
+  }).join('');
+}
+let searchTimer = 0;
+function runSearch(q) {
+  S.query = q;
+  S.hits = core.searchEvents(S.events, S.cats, q);
+  const el = $('hits');
+  if (el) el.innerHTML = hitsHTML();
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(renderTimeline, 120);
 }
 
 // 根拠の欄(備考・出典・登録元)。なければ何も出さない
@@ -570,6 +597,22 @@ const actions = {
   links() { S.showLinks = !S.showLinks; renderTimeline(); },
   add() { S.editId = null; S.pick = false; $('banner').hidden = true; openSheet('add', { sel: null }); renderTimeline(); },
   edit() { S.editId = S.sel; openSheet('add'); },
+  search() {
+    S.pick = false; $('banner').hidden = true;
+    S.hits = core.searchEvents(S.events, S.cats, S.query);
+    openSheet('search', { sel: null });
+    renderTimeline();
+    setTimeout(() => { const q = $('q'); if (q) { q.focus(); q.select(); } }, isWide() ? 50 : 360);
+  },
+  hit(el) {
+    const id = el.dataset.id, e = evById(id);
+    if (!e) return;
+    S.hidden[e.cat] = false;
+    S.aiErr = '';
+    openSheet('detail', { sel: id });
+    renderTimeline();
+    scrollToEvent(id);
+  },
   cats() { S.catMsg = ''; S.pick = false; $('banner').hidden = true; openSheet('cats', { sel: null }); renderTimeline(); },
   settings() { openSheet('settings', { sel: null, pick: false }); $('banner').hidden = true; renderTimeline(); },
   close() { closeSheet(); },
@@ -695,8 +738,11 @@ document.addEventListener('change', async e => {
     } catch (err) { $('backup-status').textContent = err.message; }
   }
 });
+document.addEventListener('input', e => { if (e.target.id === 'q') runSearch(e.target.value); });
 document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.id === 'q' && !e.isComposing) { e.preventDefault(); e.target.blur(); }
   if (e.key === 'Escape' && S.sheet) closeSheet();
+  if ((e.key === '/' || ((e.metaKey || e.ctrlKey) && e.key === 'f')) && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')) { e.preventDefault(); actions.search(); }
   if (e.key === 'Enter' && e.target.dataset?.catName && !e.isComposing) e.target.blur();
 });
 
@@ -768,6 +814,7 @@ async function boot() {
   await sync.initSync({
     onRemoteChange: async () => {
       await loadAll();
+      if (S.sheet === 'search') runSearch(S.query);
       renderTimeline();
       const typing = document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName);
       if (S.sheet === 'detail' && !typing) { if (evById(S.sel)) renderSheet(); else closeSheet(); }

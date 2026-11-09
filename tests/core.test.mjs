@@ -164,3 +164,27 @@ test('サンプルを消す対象: 初期データの出来事・関係と、そ
   assert.ok(!t.linkIds.includes('mine>mine2'));
   assert.deepEqual(t.aiIds, ['e27']);
 });
+
+test('検索: 語のAND、かなの違いを無視、年と期間、年代順', () => {
+  const ev = [...SEED_EVENTS, { id: 'x', y: 1900, m: 0, d: 0, cat: 'info', title: 'テスト', detail: '', memo: 'ひらがなのメモ', sources: [{ title: 'Moore 1965' }] }];
+  const ids = q => core.searchEvents(ev, SEED_CATS, q).map(h => h.id);
+  assert.deepEqual(ids('電信'), ['e15']);
+  assert.deepEqual(ids('電気信号'), ['e15', 'e19']);       // 詳細の中
+  assert.deepEqual(ids('ヒラガナ'), ['x']);               // ひらがな ⇔ カタカナ
+  assert.deepEqual(ids('ｍｏｏｒｅ'), ['x']);             // 全角・大小文字
+  assert.deepEqual(ids('1769'), ['p2', 'e12']);           // その年の出来事と、その年を含む期間
+  assert.deepEqual(ids('前300'), ['e3']);
+  assert.deepEqual(ids('紀元前300年'), ['e3']);
+  assert.deepEqual(ids('DNA 構造'), ['e27']);             // AND
+  assert.deepEqual(ids('情報・通信 1971'), ['e31']);      // カテゴリ名
+  assert.deepEqual(ids(''), []);
+  const t = core.searchEvents(ev, SEED_CATS, '蒸気').map(h => h.t);
+  assert.deepEqual(t, [...t].sort((a, b) => a - b));
+  assert.match(core.searchEvents(ev, SEED_CATS, 'メモ')[0].snippet, /メモ/);
+});
+
+test('検索中は当たらない出来事を薄くする', () => {
+  const L = core.layout({ events: SEED_EVENTS, cats: SEED_CATS, links: SEED_LINKS, match: new Set(['e1']) });
+  assert.equal(L.cards.find(c => c.id === 'e1').dim, false);
+  assert.equal(L.cards.find(c => c.id === 'e2').dim, true);
+});

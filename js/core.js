@@ -88,7 +88,8 @@ export const sortCats = cats => [...cats].sort((a, b) => (a.order ?? 0) - (b.ord
 
 // ---- 年表全体の配置 ----
 // width: 年表の幅(iPadでパネルを開いたときは残りの幅)
-export function layout({ events, cats, hidden = {}, links, sel = null, pick = false, flash = null, zoom = ZOOM0, width = 402, showLinks = true }) {
+// match: 検索中なら当たった出来事のidの集合(それ以外を薄くする)
+export function layout({ events, cats, hidden = {}, links, sel = null, pick = false, flash = null, zoom = ZOOM0, width = 402, showLinks = true, match = null }) {
   const vis = sortCats(cats).filter(c => !hidden[c.id]);
   const n = Math.max(1, vis.length);
   const idx = Object.fromEntries(vis.map((c, i) => [c.id, i]));
@@ -106,7 +107,7 @@ export function layout({ events, cats, hidden = {}, links, sel = null, pick = fa
     const i = idx[e.cat], top = tops[e.id], cy = top + CARD_H / 2;
     maxBottom = Math.max(maxBottom, top + CARD_H, e.y2 || 0);
     const isSel = sel === e.id;
-    const dim = !!sel && !pick && !isSel && !related.has(e.id);
+    const dim = match ? !match.has(e.id) : (!!sel && !pick && !isSel && !related.has(e.id));
     const lx = L0 + i * LW, x = lx + 10, w = LW - 14;
     leaders.push({ d: `M${AX + 4},${r1(e.y)}H${r1(lx + 2)}L${r1(lx + 8)},${r1(cy)}H${r1(x)}`, dim, sel: isSel });
     markers.push({ d: glyphD(glyphOf[e.cat], AX, r1(e.y), isSel ? 4.5 : 3.4), dim, sel: isSel });
@@ -292,4 +293,51 @@ export function sampleTargets(events, links, ai, seedEventIds, seedLinkIds) {
   const linkIds = links.filter(l => seedLn.has(l.id) || gone.has(l.from) || gone.has(l.to)).map(l => l.id);
   const aiIds = Object.keys(ai).filter(id => gone.has(id));
   return { eventIds, linkIds, aiIds };
+}
+
+// ---- 検索 ----
+// 全角半角・大小文字・ひらがなカタカナの違いを無視して比べる
+export function normalize(s) {
+  return String(s ?? '').normalize('NFKC').toLowerCase().replace(/[\u3041-\u3096]/g, c => String.fromCharCode(c.charCodeAt(0) + 0x60)).replace(/\s+/g, ' ').trim();
+}
+// 年として読める語: 1969 / 1969年 / 前300 / 紀元前300年 / BC300 / -300
+function yearOf(term) {
+  const m = term.match(/^(?:(紀元前|前|bc|-)\s*)?(\d{1,4})年?$/);
+  if (!m) return null;
+  return m[1] ? -Number(m[2]) : Number(m[2]);
+}
+// 空白区切りの語をすべて含む出来事を、年代順に返す。年の語は、その年に当たる出来事(期間なら範囲内)にも当たる。
+export function searchEvents(events, cats, query) {
+  const terms = normalize(query).split(' ').filter(Boolean);
+  if (!terms.length) return [];
+  const catName = Object.fromEntries(cats.map(c => [c.id, c.name]));
+  const out = [];
+  for (const e of events) {
+    const fields = [
+      ['title', e.title], ['cat', catName[e.cat]], ['detail', e.detail], ['memo', e.memo],
+      ['sources', (e.sources || []).map(x => `${x.title} ${x.quote || ''}`).join(' ')], ['by', e.by], ['date', fmtRange(e)],
+    ].map(([k, v]) => [k, normalize(v)]);
+    let ok = true, score = 0, hitField = null;
+    for (const t of terms) {
+      const y = yearOf(t);
+      const inYear = y !== null && (e.ey ? (y >= e.y && y <= e.ey) : y === e.y);
+      const f = fields.find(([, v]) => v.includes(t));
+      if (!f && !inYear) { ok = false; break; }
+      if (f) { score += f[0] === 'title' ? 3 : 1; if (!hitField || hitField === 'title' || hitField === 'cat' || hitField === 'date') hitField = f[0]; }
+      else score += 2;
+    }
+    if (!ok) continue;
+    const src = { detail: e.detail, memo: e.memo, sources: (e.sources || []).map(x => x.title).join(' / '), by: e.by }[hitField];
+    out.push({ id: e.id, score, t: tOf(e), snippet: src ? snippet(src, terms) : '' });
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+// 当たった語のまわり(前後30字ほど)を切り出す
+export function snippet(text, terms, span = 30) {
+  const s = String(text || ''), n = normalize(s);
+  let at = -1;
+  for (const t of terms) { at = n.indexOf(t); if (at >= 0) break; }
+  if (at < 0 || s.length <= span * 2) return s.slice(0, span * 2);
+  const a = Math.max(0, at - span), b = Math.min(s.length, at + span);
+  return (a > 0 ? '…' : '') + s.slice(a, b) + (b < s.length ? '…' : '');
 }

@@ -29,6 +29,7 @@ button { font: inherit; color: inherit; }
 .hdr-gear { width: 13px; height: 13px; fill: none; stroke: var(--color-neutral-500); stroke-width: 1.6; }
 .hdr-sub { font-size: 11px; color: var(--color-neutral-700); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .hdr-links, .hdr-add { height: 36px; font-size: 13px; }
+.hdr-search { width: 36px; height: 36px; padding: 0; color: var(--color-neutral-800); }
 .hdr-links { gap: 6px; }
 .hdr-links[aria-pressed="true"] { background: var(--color-accent-100); color: var(--color-accent-800); border-color: var(--color-accent); }
 .hdr-links[aria-pressed="false"] { background: transparent; color: var(--color-neutral-700); border-color: var(--color-divider); }
@@ -272,3 +273,21 @@ button { font: inherit; color: inherit; }
 .prov .srcs q { display: block; color: var(--color-neutral-600); font-style: normal; }
 .prov .srcs q::before { content: '“'; } .prov .srcs q::after { content: '”'; }
 .prov .by { font-family: var(--font-heading); font-size: 11px; color: var(--color-neutral-600); }
+
+/* 検索 */
+.sh-body.search { --max-h: 600px; gap: 12px; }
+#app:not(.wide) .sh-body.search { min-height: min(420px, 60dvh); }
+.search-box { position: relative; }
+.search-box .ic { position: absolute; left: 10px; top: 50%; translate: 0 -50%; color: var(--color-neutral-600); }
+.search-box .input { height: 44px; padding-left: 34px; }
+.hit { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; width: 100%; padding: 9px 0; text-align: left; background: transparent; border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent); font-family: var(--font-body); color: var(--color-text); cursor: pointer;
+  animation: rise .26s cubic-bezier(.2,.8,.3,1) both; animation-delay: calc(var(--i, 0) * 40ms); }
+.hit:active { background: color-mix(in srgb, var(--color-text) 5%, transparent); }
+.hit .hg { padding-top: 3px; color: var(--color-accent-700); }
+.hit .hg svg { width: 12px; height: 12px; } .hit .hg path { fill: currentColor; }
+.hit .hm { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.hit .dt { font-family: var(--font-heading); font-size: 11.5px; color: var(--color-accent-700); }
+.hit .tt { font-size: 14px; font-weight: 500; }
+.hit .sn { font-size: 12px; line-height: 1.5; color: var(--color-neutral-700); }
+.hit.hidden-cat .dt::after { content: ' · 非表示のカテゴリ'; color: var(--color-neutral-600); }

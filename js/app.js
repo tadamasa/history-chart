@@ -7,7 +7,7 @@ import { exportData, importData } from './backup.js';
 import { SEED_CATS, SEED_EVENTS, SEED_LINKS } from './seed.js';
 import { TEXT } from './text.js';
 
-const APP_VERSION = 'v5';
+const APP_VERSION = 'v6';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const svgG = (kind, size, r) => `<svg viewBox="0 0 ${size} ${size}" aria-hidden="true"><path d="${core.glyphD(kind, size / 2, size / 2, r)}"/></svg>`;
@@ -22,6 +22,7 @@ const ICON = {
   chevUp: '<svg class="ic" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg>',
   plus: '<svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
   send: '<svg class="ic18" viewBox="0 0 24 24"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></svg>',
+  fit: '<svg class="ic18" viewBox="0 0 24 24"><path d="M12 22v-6"/><path d="M12 8V2"/><path d="M4 12H2"/><path d="M10 12H8"/><path d="M16 12h-2"/><path d="M22 12h-2"/><path d="m15 19-3 3-3-3"/><path d="m15 5-3-3-3 3"/></svg>',
   check: '<svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>',
   corners: '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>',
 };
@@ -29,7 +30,7 @@ const ICON = {
 // ---- 状態 ----
 const S = {
   cats: [], events: [], links: [], ai: {},
-  hidden: {}, zoom: core.ZOOM0, sel: null, sheet: null, sheetOpen: false,
+  hidden: {}, zoom: core.PPY0, sel: null, sheet: null, sheetOpen: false,
   pick: false, compare: null, chat: [], chatBusy: false, aiBusy: false, aiErr: '', aiErrKey: false,
   showLinks: true, flash: null, editId: null, catMsg: '', L: null, query: '', hits: [],
 };
@@ -63,9 +64,7 @@ function tlWidth() { return stageWidth() - (isWide() && S.sheetOpen ? 396 : 0); 
 function viewH() { return $('scroller').clientHeight || 700; }
 
 function renderTimeline() {
-  const width = tlWidth();
-  const match = S.sheet === 'search' && S.sheetOpen && S.query.trim() ? new Set(S.hits.map(h => h.id)) : null;
-  const L = core.layout({ events: S.events, cats: S.cats, hidden: S.hidden, links: S.links, sel: S.sel, pick: S.pick, flash: S.flash, zoom: S.zoom, width, showLinks: S.showLinks, match });
+  const width = tlWidth(), L = core.layout(layoutArgs());
   S.L = L;
   const canvas = $('canvas');
   canvas.style.width = width + 'px';
@@ -146,8 +145,8 @@ function renderScroll(force = false) {
   setHTML($('above'), S.pick ? '' : above.map(b => badge(b, true)).join(''));
   setHTML($('below'), below.map(b => badge(b, false)).join(''));
   $('zoom-label').innerHTML = `${TEXT.zoomLabel}<br><span>${core.zoomLabel(vh, S.zoom)}</span>`;
-  $('zoom').querySelector('[data-act="zoom-in"]').disabled = S.zoom >= core.LIN.length - 1;
-  $('zoom').querySelector('[data-act="zoom-out"]').disabled = S.zoom <= 0;
+  $('zoom').querySelector('[data-act="zoom-in"]').disabled = S.zoom >= core.PPY_MAX * 0.999;
+  $('zoom').querySelector('[data-act="zoom-out"]').disabled = S.zoom <= core.PPY_MIN * 1.001;
 }
 function setHTML(el, html) { if (el._html !== html) { el._html = html; el.innerHTML = html; } }
 
@@ -158,15 +157,53 @@ function scrollToEvent(id, frac = 0.22) {
   if (!e) return;
   $('scroller').scrollTo({ top: core.yAt(core.tOf(e), S.zoom) - viewH() * frac, behavior: reduced() ? 'auto' : 'smooth' });
 }
-// anchor: 維持する画面内の位置(px)。既定は中央。
-function setZoom(z, anchor = viewH() / 2) {
-  z = Math.max(0, Math.min(core.LIN.length - 1, z));
-  if (z === S.zoom) return;
-  const t = core.tAt($('scroller').scrollTop + anchor, S.zoom);
-  S.zoom = z;
+// 縮尺を変える。anchor: 年を動かさない画面内の位置(px)。center を渡すとその年を anchor に置く。
+function applyZoom(ppy, anchor = viewH() / 2, center = null) {
+  ppy = core.clampPpy(ppy);
+  const t = center ?? core.tAt($('scroller').scrollTop + anchor, S.zoom);
+  S.zoom = ppy;
   renderTimeline();
-  $('scroller').scrollTop = core.yAt(t, z) - anchor;
+  $('scroller').scrollTop = core.yAt(t, ppy) - anchor;
   renderScroll(true);
+}
+// 縮尺は対数で、中心の年は線形で補間する(ease-out 0.32秒)。途中で次の操作が来たら引き継ぐ。
+let zoomAnim = 0;
+function animateZoom(ppy, { anchor = viewH() / 2, center = null } = {}) {
+  cancelAnimationFrame(zoomAnim);
+  ppy = core.clampPpy(ppy);
+  const t0 = core.tAt($('scroller').scrollTop + anchor, S.zoom);
+  const t1 = center ?? t0;
+  if (reduced()) return applyZoom(ppy, anchor, t1);
+  const l0 = Math.log(S.zoom), l1 = Math.log(ppy), start = performance.now(), dur = 320;
+  const step = now => {
+    const k = Math.min(1, (now - start) / dur), e = 1 - Math.pow(1 - k, 3);
+    applyZoom(Math.exp(l0 + (l1 - l0) * e), anchor, t0 + (t1 - t0) * e);
+    if (k < 1) zoomAnim = requestAnimationFrame(step);
+  };
+  zoomAnim = requestAnimationFrame(step);
+}
+// 合わせ込みの対象: 比較中はその2つ、強調中(選択・検索)は濃く残っている出来事、なければ表示中の全部
+function layoutArgs(ppy = S.zoom) {
+  const match = S.sheet === 'search' && S.sheetOpen && S.query.trim() ? new Set(S.hits.map(h => h.id)) : null;
+  return { events: S.events, cats: S.cats, hidden: S.hidden, links: S.links, sel: S.sel, pick: S.pick, flash: S.flash, zoom: ppy, width: tlWidth(), showLinks: S.showLinks, match };
+}
+function fitTargets() {
+  if (S.sheet === 'chat' && S.sheetOpen && S.compare) return S.compare.map(evById).filter(Boolean);
+  const cards = S.L?.cards || [];
+  const on = cards.filter(c => !c.dim);
+  return (on.length ? on : cards).map(c => evById(c.id)).filter(Boolean);
+}
+// iPhoneでシートが開いているときは、シートより上の見えている部分に収める
+function visibleH() {
+  const vh = viewH();
+  if (isWide() || !S.sheetOpen) return vh;
+  const top = $('sheet').getBoundingClientRect().top - $('scroller').getBoundingClientRect().top;
+  return Math.max(160, Math.min(vh, top));
+}
+function fitZoom() {
+  const h = visibleH(), evs = fitTargets();
+  const f = core.refineFit(core.fitView(evs, h, { margin: 30 }), new Set(evs.map(e => e.id)), h, ppy => core.layout(layoutArgs(ppy)));
+  if (f) animateZoom(f.ppy, { anchor: h / 2, center: f.center });
 }
 
 // ---- シート ----
@@ -212,7 +249,7 @@ function detailHTML() {
   const rels = core.relationsOf(e.id, S.events, S.links);
   const sugs = (info?.suggestions || []);
   const label = S.aiBusy ? TEXT.analyzing : info ? TEXT.reanalyze : TEXT.analyze;
-  return `<button class="btn btn-ghost sheet-edit" data-act="edit" aria-label="編集">${ICON.pencil}</button>
+  return `<button class="btn btn-ghost sheet-fit" data-act="fit" aria-label="${TEXT.fitRel}">${ICON.fit}</button><button class="btn btn-ghost sheet-edit" data-act="edit" aria-label="編集">${ICON.pencil}</button>
   <div class="sh-body detail">
     <div class="d-head">
       <div class="kicker">${svgG(c.glyph, 12, 3.6)}<span>${esc(c.name)}</span><span class="sep">/</span><span>${esc(core.fmtRange(e, true))}</span></div>
@@ -249,7 +286,7 @@ function searchHTML() {
 function hitsHTML() {
   if (!S.query.trim()) return `<p class="empty">${TEXT.searchHint}</p>`;
   if (!S.hits.length) return `<p class="empty">${TEXT.searchNone}</p>`;
-  return `<div class="sec-h">${TEXT.searchCount(S.hits.length)}</div>` + S.hits.slice(0, 200).map((h, i) => {
+  return `<div class="sec-h hits-h"><span>${TEXT.searchCount(S.hits.length)}</span><button class="btn btn-ghost hits-fit" data-act="fit">${ICON.fit}${TEXT.fitHits}</button></div>` + S.hits.slice(0, 200).map((h, i) => {
     const e = evById(h.id), c = catById(e.cat) || { name: '', glyph: 'circle' };
     return `<button class="hit${S.hidden[e.cat] ? ' hidden-cat' : ''}" data-act="hit" data-id="${esc(e.id)}" style="--i:${Math.min(i, 12)}"><span class="hg">${svgG(c.glyph, 12, 3.6)}</span><span class="hm"><span class="dt">${esc(core.fmtRange(e))} · ${esc(c.name)}</span><span class="tt">${esc(e.title)}</span>${h.snippet ? `<span class="sn">${esc(h.snippet)}</span>` : ''}</span></button>`;
   }).join('');
@@ -617,8 +654,9 @@ const actions = {
   settings() { openSheet('settings', { sel: null, pick: false }); $('banner').hidden = true; renderTimeline(); },
   close() { closeSheet(); },
   jump(el) { $('scroller').scrollTo({ top: +el.dataset.top, behavior: reduced() ? 'auto' : 'smooth' }); },
-  'zoom-in'() { setZoom(S.zoom + 1); },
-  'zoom-out'() { setZoom(S.zoom - 1); },
+  'zoom-in'() { animateZoom(S.zoom * core.ZOOM_STEP); },
+  'zoom-out'() { animateZoom(S.zoom / core.ZOOM_STEP); },
+  fit() { fitZoom(); },
   analyze() { analyze(); },
   pick() {
     const e = evById(S.sel);
@@ -751,32 +789,38 @@ function bindScroller() {
   const sc = $('scroller');
   let raf = 0;
   sc.addEventListener('scroll', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => renderScroll()); }, { passive: true });
-  // トラックパッドのピンチ(ctrl+wheel)
-  let lastZ = 0;
+  // トラックパッドのピンチ(ctrl+wheel)は連続に。描画は1フレームに1回まとめる
+  let wheelPpy = null, wheelAnchor = 0, wraf = 0;
   sc.addEventListener('wheel', e => {
     if (!e.ctrlKey) return;
     e.preventDefault();
-    const now = Date.now();
-    if (now - lastZ < 220) return;
-    lastZ = now;
-    const r = sc.getBoundingClientRect();
-    setZoom(S.zoom + (e.deltaY < 0 ? 1 : -1), e.clientY - r.top);
+    cancelAnimationFrame(zoomAnim);
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    wheelPpy = core.clampPpy((wheelPpy ?? S.zoom) * Math.exp(-dy * 0.01));
+    wheelAnchor = e.clientY - sc.getBoundingClientRect().top;
+    if (!wraf) wraf = requestAnimationFrame(() => { wraf = 0; applyZoom(wheelPpy, wheelAnchor); wheelPpy = null; });
   }, { passive: false });
-  // タッチのピンチ: 指の間隔が1.35倍/0.74倍になるごとに1段。指の中点の年を保つ
-  let p0 = null;
+  // タッチのピンチ: 指の間隔の比をそのまま縮尺に。始めたときに指の中点にあった年を、いまの中点に保つ
+  let pinch = null, praf = 0;
   const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-  sc.addEventListener('touchstart', e => { if (e.touches.length === 2) p0 = dist(e.touches); }, { passive: true });
+  const midY = t => (t[0].clientY + t[1].clientY) / 2 - sc.getBoundingClientRect().top;
+  sc.addEventListener('touchstart', e => {
+    if (e.touches.length !== 2) return;
+    cancelAnimationFrame(zoomAnim);
+    const m = midY(e.touches);
+    pinch = { d0: dist(e.touches), ppy0: S.zoom, t: core.tAt(sc.scrollTop + m, S.zoom), d: 0, m };
+  }, { passive: true });
   sc.addEventListener('touchmove', e => {
-    if (e.touches.length !== 2 || !p0) return;
+    if (e.touches.length !== 2 || !pinch) return;
     e.preventDefault();
-    const d = dist(e.touches), step = core.pinchStep(d / p0);
-    if (step) {
-      const r = sc.getBoundingClientRect();
-      setZoom(S.zoom + step, (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top);
-      p0 = d;
-    }
+    pinch.d = dist(e.touches); pinch.m = midY(e.touches);
+    if (!praf) praf = requestAnimationFrame(() => {
+      praf = 0;
+      if (pinch) applyZoom(core.pinchPpy(pinch.ppy0, pinch.d / pinch.d0), pinch.m, pinch.t);
+    });
   }, { passive: false });
-  sc.addEventListener('touchend', e => { if (e.touches.length < 2) p0 = null; }, { passive: true });
+  sc.addEventListener('touchend', e => { if (e.touches.length < 2) pinch = null; }, { passive: true });
+  sc.addEventListener('touchcancel', () => { pinch = null; }, { passive: true });
   // iOS Safari のページ全体の拡大を止める(年表のズームと二重にならないように)
   document.addEventListener('gesturestart', e => e.preventDefault());
 }

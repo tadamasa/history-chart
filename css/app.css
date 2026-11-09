@@ -138,6 +138,10 @@ button { font: inherit; color: inherit; }
 #app.sheet-open #sheet { transform: none; visibility: visible; }
 #app.sheet-closing #sheet { visibility: visible; }
 .sheet-close { position: absolute; top: 6px; right: 6px; width: 40px; height: 40px; padding: 0; color: var(--color-neutral-700); z-index: 2; border: 0; }
+.zoom .zoom-fit { border-top: 1px solid var(--color-divider); color: var(--color-accent-800); }
+.sheet-fit { position: absolute; top: 6px; right: 88px; width: 40px; height: 40px; padding: 0; color: var(--color-neutral-700); z-index: 2; border: 0; }
+.hits-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.hits-fit { height: 32px; padding: 0 8px; gap: 6px; font-size: 12px; border: 0; color: var(--color-accent-800); }
 .sheet-edit { position: absolute; top: 6px; right: 48px; width: 40px; height: 40px; padding: 0; color: var(--color-neutral-700); z-index: 2; border: 0; }
 .sh-body { --max-h: 520px; max-height: min(var(--max-h), calc(100dvh - var(--safe-t) - var(--safe-b) - 70px)); overflow-y: auto; overscroll-behavior: contain; padding: 16px 16px 18px; display: flex; flex-direction: column; gap: 14px; }
 .sh-body.add { --max-h: 640px; gap: 12px; }
@@ -157,7 +161,7 @@ button { font: inherit; color: inherit; }
 .kicker svg { width: 11px; height: 11px; }
 .kicker path { fill: currentColor; }
 .kicker .sep { opacity: .5; }
-.d-head { display: flex; flex-direction: column; gap: 4px; padding-right: 76px; }
+.d-head { display: flex; flex-direction: column; gap: 4px; padding-right: 116px; }
 .d-title { font-family: var(--font-heading); font-weight: 600; font-size: 24px; line-height: 1.1; text-wrap: pretty; margin: 0; }
 .d-detail { margin: 0; font-size: 14px; line-height: 1.65; color: var(--color-neutral-800); text-wrap: pretty; white-space: pre-wrap; }
 .d-actions { display: flex; gap: 8px; }

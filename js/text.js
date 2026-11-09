@@ -2,6 +2,8 @@
 export const TEXT = {
   subject: '科学技術史',
   zoomLabel: '表示幅',
+  fitRel: 'この出来事と関係先が収まる幅にする',
+  fitHits: '年表で範囲を表示',
   analyze: 'AIで関係を紐解く',
   reanalyze: 'もう一度紐解く',
   analyzing: '解析中…',

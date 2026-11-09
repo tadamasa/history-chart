@@ -5,9 +5,13 @@ export const GLYPHS = ['circle', 'diamond', 'square', 'triangle', 'tridown', 'he
 export const TMIN = -3300;
 export const MAX_YEAR = Math.max(2026, new Date().getFullYear());
 export const TMAX = MAX_YEAR + 0.99;
-export const LIN = [0.14, 0.5, 2, 8, 32]; // ズーム段階 px/年
-export const ZOOM0 = 2;
-export const STEPS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000];
+// ズームは連続の値 ppy(1年あたりのpx)。デザインの5段階 [0.14, 0.5, 2, 8, 32] を含む範囲を滑らかに動く。
+export const PPY0 = 2;          // 初期値(デザインどおり)
+export const PPY_MIN = 0.02;    // 全期間(約5300年)が約100pxに収まる
+export const PPY_MAX = 128;     // 1か月が約10px
+export const ZOOM_STEP = 2;     // ＋−1回の倍率
+export const clampPpy = p => Math.max(PPY_MIN, Math.min(PPY_MAX, p));
+export const STEPS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000];
 export const AX = 52; // 時間軸の x
 export const PAD = 40; // 上の余白
 export const PADB = 170; // 下の余白
@@ -44,9 +48,9 @@ export const tEnd = e => e.ey + (e.em ? (e.em - 1) / 12 + (e.ed ? (e.ed - 1) / 3
 export const tickLabel = t => (t < 0 ? `前${-t}` : `${t === 0 ? 1 : t}`);
 
 // ---- 軸 ----
-export const yAt = (t, z) => PAD + (t - TMIN) * LIN[z];
-export const tAt = (y, z) => TMIN + (y - PAD) / LIN[z];
-export const tickStep = z => STEPS.find(x => x * LIN[z] >= 56) || 1000;
+export const yAt = (t, ppy) => PAD + (t - TMIN) * ppy;
+export const tAt = (y, ppy) => TMIN + (y - PAD) / ppy;
+export const tickStep = ppy => STEPS.find(x => x * ppy >= 56) || 5000;
 
 // 表示範囲 y0..y1 の目盛りと、1つおきの帯
 export function ticksIn(y0, y1, z) {
@@ -59,9 +63,46 @@ export function ticksIn(y0, y1, z) {
   return { ticks: tk.map(x => ({ y: x.y, label: tickLabel(x.t) })), bands };
 }
 
-export function zoomLabel(viewH, z) {
-  const ppy = LIN[z], unit = ppy < 1 ? 100 : 1;
-  return `${Math.round(viewH / ppy / unit) * unit}年`;
+// 表示幅(画面の高さに入る年数)。2桁に丸める
+export function zoomLabel(viewH, ppy) {
+  const yrs = viewH / ppy;
+  if (yrs < 1) return `${Math.max(1, Math.round(yrs * 12))}か月`;
+  const mag = Math.pow(10, Math.max(0, Math.floor(Math.log10(yrs)) - 1));
+  return `${Math.round(yrs / mag) * mag}年`;
+}
+
+// 表示幅の合わせ込み: 出来事の範囲(期間は終わりまで)が画面の上下に余白を残して収まる ppy と中央の年。
+// 1件だけ・同じ年ばかりなら前後 minSpan/2 年を見せる。
+export function fitView(events, viewH, { margin = 90, minSpan = 20 } = {}) {
+  if (!events.length) return null;
+  let a = Infinity, b = -Infinity;
+  for (const e of events) { a = Math.min(a, tOf(e)); b = Math.max(b, e.ey ? tEnd(e) : tOf(e)); }
+  const span = Math.max(b - a, minSpan);
+  const usable = Math.max(120, viewH - margin * 2 - CARD_H);
+  return { ppy: clampPpy(usable / span), center: (a + b) / 2, tspan: span };
+}
+// fitView は時間だけで縮尺を決めるので、同じ頃の出来事がレーンで縦に積まれると画面からはみ出す。
+// 実際の配置(layoutAt(ppy) の cards)を見て、積み上がり分を差し引いた縮尺に数回で寄せ、カードの範囲の中央に置く。
+export function refineFit(fit, ids, viewH, layoutAt, { margin = 24, rounds = 4 } = {}) {
+  if (!fit) return null;
+  let ppy = fit.ppy, box = null;
+  const avail = Math.max(60, viewH - margin * 2);
+  for (let i = 0; i < rounds; i++) {
+    const cs = layoutAt(ppy).cards.filter(c => ids.has(c.id));
+    if (!cs.length) return fit;
+    box = { top: Math.min(...cs.map(c => c.top)), bot: Math.max(...cs.map(c => c.top + c.h)), ppy };
+    const span = box.bot - box.top;
+    if (span <= avail + 1) break;
+    // 積み上がりだけで画面の大半を占めるなら、縮めても時間軸がつぶれるだけなので止める
+    const room = avail - (span - fit.tspan * ppy);
+    if (room < avail * 0.4) break;
+    const next = clampPpy(room / fit.tspan);
+    if (next >= ppy * 0.98) break;
+    ppy = next;
+  }
+  const span = box.bot - box.top;
+  const cy = span <= avail ? (box.top + box.bot) / 2 : box.top - margin + viewH / 2;
+  return { ppy: box.ppy, center: tAt(cy, box.ppy) };
 }
 
 // ---- 重なり回避(1次元のラベル配置) ----
@@ -89,7 +130,7 @@ export const sortCats = cats => [...cats].sort((a, b) => (a.order ?? 0) - (b.ord
 // ---- 年表全体の配置 ----
 // width: 年表の幅(iPadでパネルを開いたときは残りの幅)
 // match: 検索中なら当たった出来事のidの集合(それ以外を薄くする)
-export function layout({ events, cats, hidden = {}, links, sel = null, pick = false, flash = null, zoom = ZOOM0, width = 402, showLinks = true, match = null }) {
+export function layout({ events, cats, hidden = {}, links, sel = null, pick = false, flash = null, zoom = PPY0, width = 402, showLinks = true, match = null }) {
   const vis = sortCats(cats).filter(c => !hidden[c.id]);
   const n = Math.max(1, vis.length);
   const idx = Object.fromEntries(vis.map((c, i) => [c.id, i]));
@@ -269,12 +310,8 @@ export const firstQuestion = (ea, eb) => `「${ea.title}」と「${eb.title}」�
 export const QUICK = ['間をつなぐ出来事は？', 'どちらか一方がなかったら？', '同時代の他分野では？'];
 
 // ---- ピンチ ----
-// 指の間隔の比から、ズームを1段変えるかどうか(+1/-1/0)
-export function pinchStep(ratio) {
-  if (ratio >= 1.35) return 1;
-  if (ratio <= 0.74) return -1;
-  return 0;
-}
+// 指の間隔の比をそのまま倍率にする(連続)。
+export const pinchPpy = (ppy0, ratio) => clampPpy(ppy0 * ratio);
 
 // カテゴリ削除の可否
 export function catDeleteBlock(cat, cats, events) {

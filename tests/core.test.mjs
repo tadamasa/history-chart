@@ -29,15 +29,16 @@ test('日付の書き方: 紀元前、期間、年数', () => {
 
 test('目盛り間隔は 間隔×px/年 ≥ 56 の最小値', () => {
   assert.equal(core.tickStep(2), 50); // 2px/年
-  assert.equal(core.tickStep(0), 500); // 0.14px/年
-  assert.equal(core.tickStep(4), 2); // 32px/年
+  assert.equal(core.tickStep(0.14), 500);
+  assert.equal(core.tickStep(32), 2);
+  assert.equal(core.tickStep(0.02), 5000);
   const { ticks, bands } = core.ticksIn(core.yAt(1800, 2), core.yAt(2000, 2), 2);
   assert.deepEqual(ticks.map(t => t.label), ['1800', '1850', '1900', '1950', '2000']);
   assert.ok(bands.length >= 2);
 });
 
 test('yAt と tAt は逆関数', () => {
-  for (let z = 0; z < core.LIN.length; z++) assert.ok(Math.abs(core.tAt(core.yAt(1234.5, z), z) - 1234.5) < 1e-9);
+  for (const z of [0.02, 0.14, 0.7, 2, 33.3, 128]) assert.ok(Math.abs(core.tAt(core.yAt(1234.5, z), z) - 1234.5) < 1e-9);
 });
 
 test('カード配置: 重ならず、間隔6px以上', () => {
@@ -139,9 +140,9 @@ test('parseJSON は前後の文字を除いて読む', () => {
 });
 
 test('ピンチの段階とカテゴリ削除の可否', () => {
-  assert.equal(core.pinchStep(1.4), 1);
-  assert.equal(core.pinchStep(0.7), -1);
-  assert.equal(core.pinchStep(1.1), 0);
+  assert.equal(core.pinchPpy(2, 1.5), 3);
+  assert.equal(core.pinchPpy(2, 1000), core.PPY_MAX);
+  assert.equal(core.pinchPpy(2, 0.0001), core.PPY_MIN);
   assert.match(core.catDeleteBlock(SEED_CATS[0], SEED_CATS, SEED_EVENTS), /件の出来事があるため削除できません/);
   assert.equal(core.catDeleteBlock({ id: 'x', name: 'x' }, SEED_CATS, SEED_EVENTS), '');
   assert.equal(core.catDeleteBlock({ id: 'x', name: 'x' }, [{ id: 'x' }], []), 'カテゴリは1件以上必要です。');
@@ -187,4 +188,43 @@ test('検索中は当たらない出来事を薄くする', () => {
   const L = core.layout({ events: SEED_EVENTS, cats: SEED_CATS, links: SEED_LINKS, match: new Set(['e1']) });
   assert.equal(L.cards.find(c => c.id === 'e1').dim, false);
   assert.equal(L.cards.find(c => c.id === 'e2').dim, true);
+});
+
+test('表示幅の表記と合わせ込み', () => {
+  assert.equal(core.zoomLabel(702, 2), '350年');
+  assert.equal(core.zoomLabel(702, 0.14), '5000年');
+  assert.equal(core.zoomLabel(702, 128), '5年');
+  assert.equal(core.zoomLabel(702, 1000), '8か月');
+  const all = core.fitView(SEED_EVENTS, 702);
+  // 全件(前3200〜2022)が余白を残して収まる
+  const top = core.yAt(-3200, all.ppy), bot = core.yAt(2022.9, all.ppy), mid = core.yAt(all.center, all.ppy);
+  assert.ok(bot - top <= 702 - 180 - 50 + 1);
+  assert.ok(Math.abs((top + bot) / 2 - mid) < 1);
+  // 2件なら、その間だけ
+  const two = core.fitView(SEED_EVENTS.filter(e => ['e14', 'e20'].includes(e.id)), 702);
+  assert.ok(two.ppy > all.ppy * 20);
+  // 1件は前後10年
+  const one = core.fitView([SEED_EVENTS[0]], 702);
+  assert.ok(Math.abs(one.ppy - (702 - 230) / 20) < 1e-9);
+  assert.equal(core.fitView([], 702), null);
+});
+
+test('積み上がりを見て合わせ込みを詰める', () => {
+  // 同じ年代に12件。時間だけで決めると縦に積まれたカードがはみ出す
+  const evs = Array.from({ length: 12 }, (_, i) => ({ id: 'x' + i, y: 1900 + i, cat: 'c' }));
+  const cats = [{ id: 'c', name: 'C', glyph: 'circle', order: 0 }];
+  const ids = new Set(evs.map(e => e.id));
+  const at = ppy => core.layout({ events: evs, cats, links: [], zoom: ppy, width: 402 });
+  const viewH = 700;
+  const f0 = core.fitView(evs, viewH, { margin: 30 });
+  const f = core.refineFit(f0, ids, viewH, at);
+  assert.ok(f.ppy <= f0.ppy);
+  const cs = at(f.ppy).cards, top = Math.min(...cs.map(c => c.top)), bot = Math.max(...cs.map(c => c.top + c.h));
+  // 積み上がり(12×(50+隙間))が画面に収まらないときは先頭を上端近くに置く
+  const y0 = core.yAt(f.center, f.ppy) - viewH / 2;
+  assert.ok(top - y0 >= 0 && top - y0 <= 40, `top offset ${top - y0}`);
+  // 少数なら全部が中に収まる
+  const few = evs.slice(0, 3), fs = core.refineFit(core.fitView(few, viewH), new Set(few.map(e => e.id)), viewH, ppy => core.layout({ events: few, cats, links: [], zoom: ppy, width: 402 }));
+  const c2 = core.layout({ events: few, cats, links: [], zoom: fs.ppy, width: 402 }).cards, s0 = core.yAt(fs.center, fs.ppy) - viewH / 2;
+  assert.ok(c2.every(c => c.top >= s0 && c.top + c.h <= s0 + viewH));
 });
